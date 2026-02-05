@@ -17,15 +17,9 @@ func (c *Client) FetchPendingOutages() ([]models.Outage, error) {
 
 	for {
 		payload := models.PendingRequest{
-			FilteredData: []models.FilteredData{{
-				ID: 14, Field: "outage_occur_at", Type: "date",
-				Operator:  "between",
-				Value:     "2026-01-02 to 2026-02-01",
-				FromValue: "2026-01-02",
-				ToValue:   "2026-02-01",
-			}},
-			Offset: offset,
-			Limit:  config.PageSize,
+			FilteredData: []models.FilteredData{}, // Empty filter to match browser behavior
+			Offset:       offset,
+			Limit:        config.PageSize,
 		}
 
 		body, _ := json.Marshal(payload)
@@ -45,6 +39,11 @@ func (c *Client) FetchPendingOutages() ([]models.Outage, error) {
 			return nil, fmt.Errorf("pending returned %d: %s", resp.StatusCode, respBody)
 		}
 
+		// DEBUG: Print raw response for first page
+		if offset == 0 {
+			log.Printf("\n[DEBUG] Raw API Response (first page):\n%s\n", string(respBody))
+		}
+
 		var pr models.PendingResponse
 		if err := json.Unmarshal(respBody, &pr); err != nil {
 			return nil, fmt.Errorf("unmarshal pending: %w", err)
@@ -53,17 +52,25 @@ func (c *Client) FetchPendingOutages() ([]models.Outage, error) {
 		all = append(all, pr.Data...)
 		log.Printf("  [Fetch] offset=%d got=%d total=%d", offset, len(pr.Data), pr.TotalRecords)
 
-		if offset+config.PageSize >= pr.TotalRecords || len(pr.Data) == 0 {
-			break
-		}
-		offset += config.PageSize
+		// DEBUG: Only fetch first page for now
+		log.Println("  [DEBUG] Stopping after first page for debugging")
+		break
+
+		// if offset+config.PageSize >= pr.TotalRecords || len(pr.Data) == 0 {
+		// 	break
+		// }
+		// offset += config.PageSize
+		// 
+		// // Rate limiting: delay between pagination requests
+		// time.Sleep(time.Duration(config.DelayBetweenPages) * time.Millisecond)
 	}
 	return all, nil
 }
 
 // FetchLocIDs extracts loc_ids from the GeoJSON response for a specific outage.
-func (c *Client) FetchLocIDs(outageID string) ([]int, error) {
-	url := fmt.Sprintf("%s/reason/outage/%s", config.BaseURL, outageID)
+func (c *Client) FetchLocIDs(outageID string, feederID int) ([]int, error) {
+	url := fmt.Sprintf("%s/reason/%d/%s", config.BaseURL, feederID, outageID)
+	
 
 	req, err := c.NewAPIRequest("GET", url, nil)
 	if err != nil {
@@ -87,11 +94,22 @@ func (c *Client) FetchLocIDs(outageID string) ([]int, error) {
 	}
 
 	// Walk: feederPointGeoJson[*][*].row_to_json.features[*].properties.id
+	// Filter: only select poles where hlt == "HT Pole"
+	// Note: feederPointGeoJson contains mixed types (arrays and objects), so we parse each element
 	var locIDs []int
-	for _, outer := range detail.Data.FeederPointGeoJson {
-		for _, inner := range outer {
-			for _, feat := range inner.RowToJSON.Features {
-				if feat.Properties.ID != 0 {
+	for _, rawElem := range detail.Data.FeederPointGeoJson {
+		// Try to unmarshal as array of RowToJSONWrapper
+		var wrappers []models.RowToJSONWrapper
+		if err := json.Unmarshal(rawElem, &wrappers); err != nil {
+			// Skip non-array elements (like the metadata object)
+			continue
+		}
+		
+		// Extract pole IDs from this array
+		for _, wrapper := range wrappers {
+			for _, feat := range wrapper.RowToJSON.Features {
+				// Only include HT Poles
+				if feat.Properties.Hlt == "HT Pole" && feat.Properties.ID != 0 {
 					locIDs = append(locIDs, feat.Properties.ID)
 				}
 			}
@@ -101,8 +119,8 @@ func (c *Client) FetchLocIDs(outageID string) ([]int, error) {
 }
 
 // SubmitReason posts the selected reason and location for an outage.
-func (c *Client) SubmitReason(outageID string, locID int, reasonID int) error {
-	url := fmt.Sprintf("%s/reason/outage/%s", config.BaseURL, outageID)
+func (c *Client) SubmitReason(outageID string, feederID int, locID int, reasonID int) error {
+	url := fmt.Sprintf("%s/reason/%d/%s", config.BaseURL, feederID, outageID)
 
 	payload := []models.ReasonPayloadItem{{LocID: locID, ReasonID: reasonID}}
 	body, _ := json.Marshal(payload)

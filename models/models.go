@@ -51,8 +51,8 @@ type PendingResponse struct {
 // ─── REASON DETAIL ───
 
 type GeoFeatureProperties struct {
-	Hlt string `json:"hlt"`
-	ID  int    `json:"id"` 
+	Hlt string `json:"hlt"` // Pole type (e.g., "HT Pole")
+	ID  int    `json:"id"`  // Pole ID
 }
 
 type GeoFeatureGeometry struct {
@@ -80,8 +80,8 @@ type ReasonDetailResponse struct {
 	Status  bool   `json:"status"`
 	Message string `json:"message"`
 	Data    struct {
-		OutageData         json.RawMessage         `json:"outageData"`
-		FeederPointGeoJson [][]RowToJSONWrapper    `json:"feederPointGeoJson"`
+		OutageData         json.RawMessage   `json:"outageData"`
+		FeederPointGeoJson []json.RawMessage `json:"feederPointGeoJson"` // Mixed types: arrays and objects
 	} `json:"data"`
 }
 
@@ -102,9 +102,7 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Status  bool   `json:"status"`
-	Message string `json:"message"`
-	Data    struct {
-		Token string `json:"token"`
-	} `json:"data"`
+	User struct {
+		AuthToken string `json:"auth_token"`
+	} `json:"user"`
 }

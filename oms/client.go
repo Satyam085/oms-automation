@@ -70,11 +70,11 @@ func (c *Client) Login() error {
 		return fmt.Errorf("unmarshal login response: %w", err)
 	}
 
-	if !loginResp.Status || loginResp.Data.Token == "" {
-		return fmt.Errorf("login failed: %s", loginResp.Message)
+	if loginResp.User.AuthToken == "" {
+		return fmt.Errorf("login failed: auth_token missing")
 	}
 
-	c.Token = loginResp.Data.Token
+	c.Token = loginResp.User.AuthToken
 	log.Printf("  ✓ Logged in as empNo=%s | token=%s...%s",
 		config.Creds.EmpNo, c.Token[:10], c.Token[len(c.Token)-8:])
 	return nil

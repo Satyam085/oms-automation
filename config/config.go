@@ -5,6 +5,10 @@ import "oms-automtion/models"
 const (
 	BaseURL  = "https://omsapi.geourja.com"
 	PageSize = 10
+	
+	// Rate limiting delays (in milliseconds)
+	DelayBetweenPages   = 1000  // 1 second between pagination requests
+	DelayBetweenOutages = 2000  // 2 seconds between processing each outage
 )
 
 var Creds = struct {

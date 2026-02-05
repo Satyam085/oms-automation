@@ -12,6 +12,62 @@ import (
 	"oms-automtion/utils"
 )
 
+/*
+╔════════════════════════════════════════════════════════════════════════════╗
+║                         REASON ID REFERENCE TABLE                          ║
+╠═════╦══════════════════════════════════════════════════════════════════════╣
+║ ID  ║ Reason Name                                                          ║
+╠═════╬══════════════════════════════════════════════════════════════════════╣
+║  1  ║ Pin Puncture                                                         ║
+║  2  ║ Pole collapse                                                        ║
+║  4  ║ Animal Fault                                                         ║
+║  5  ║ Bird Fault                                                           ║
+║  6  ║ Cable Wire Fault                                                     ║
+║  7  ║ Vehicle accident                                                     ║
+║  8  ║ Conductor Slipped From Pin Insulator                                 ║
+║  9  ║ Conductor Snapped HT Line                                            ║
+║ 10  ║ Disaster like heavy rain                                             ║
+║ 12  ║ Flash over of Breakers                                               ║
+║ 15  ║ Guarding Fault                                                       ║
+║ 16  ║ Hoarding Fallen                                                      ║
+║ 17  ║ HT Connection Internal Fault                                         ║
+║ 18  ║ Insulation Burnt                                                     ║
+║ 19  ║ Insulator Puncture                                                   ║
+║ 20  ║ Jumper Burnt                                                         ║
+║ 21  ║ Jumper Touching                                                      ║
+║ 22  ║ LA Fault                                                             ║
+║ 23  ║ Lightening Stroke                                                    ║
+║ 24  ║ Low Clearance at Crossing                                            ║
+║ 25  ║ No Cause found                                                       ║
+║ 27  ║ Overhead ABC conductor fault                                         ║
+║ 28  ║ Relay Problems                                                       ║
+║ 29  ║ Shakle Puncture                                                      ║
+║ 30  ║ Transformer Failure                                                  ║
+║ 31  ║ Tree / Tree Branch Falling                                           ║
+║ 32  ║ Under ground cable fault                                             ║
+║ 33  ║ Under Ground Cable Fault by Outsider                                 ║
+║ 65  ║ Smoke                                                                ║
+║ 74  ║ Cyclone                                                              ║
+║ 75  ║ Accident                                                             ║
+║ 78  ║ Jumper                                                               ║
+║ 86  ║ Danger to life                                                       ║
+║ 87  ║ Bomb blast                                                           ║
+║ 88  ║ Air Strike                                                           ║
+║ 91  ║ Fire in buildings                                                    ║
+║ 92  ║ Fire in godown                                                       ║
+║ 93  ║ Fire in fiels/jungle                                                 ║
+║ 100 ║ DO Fuse short with MS angle                                          ║
+║ 112 ║ Line Fabrication Damage                                              ║
+║ 113 ║ Heavy Wind                                                           ║
+╚═════╩══════════════════════════════════════════════════════════════════════╝
+
+Common Reason IDs Used by Duration Rules:
+  - ID 25: No Cause found (< 1 hour)
+  - ID 28: Relay Problems (1-4 hours, 4-8 hours)
+  - ID 30: Transformer Failure (8-24 hours, > 24 hours)
+*/
+
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	log.Println("═══ OMS Outage Reason Automation ═══")
@@ -40,12 +96,24 @@ func main() {
 	}
 
 	var processed []processedOutage
-	for _, o := range outages {
-		hours, err := utils.ParseDuration(o.Duration)
-		if err != nil {
-			log.Printf("  [WARN] Skip %s: %v", o.ID, err)
-			continue
+	for i, o := range outages {
+		// DEBUG: Print first 3 outages in detail
+		if i < 3 {
+			log.Printf("\n[DEBUG] Outage #%d:\n  ID: %s\n  Duration: %q\n  OutageOccurAt: %q\n  OutageRestoreAt: %q\n  FeederName: %q\n",
+				i+1, o.ID, o.Duration, o.OutageOccurAt, o.OutageRestoreAt, o.FeederName)
 		}
+
+		// Try to calculate duration from timestamps first
+		hours, err := utils.CalculateDurationFromTimestamps(o.OutageOccurAt, o.OutageRestoreAt)
+		if err != nil {
+			// Fallback: try parsing the pre-calculated duration field
+			hours, err = utils.ParseDuration(o.Duration)
+			if err != nil {
+				log.Printf("  [WARN] Skip %s: %v", o.ID, err)
+				continue
+			}
+		}
+		
 		processed = append(processed, processedOutage{
 			Outage:        o,
 			DurationHours: hours,
@@ -77,7 +145,7 @@ func main() {
 			i+1, len(processed), id, p.DurationHours, p.Rule.ReasonID)
 
 		// Fetch available loc_ids from feederPointGeoJson
-		locIDs, err := client.FetchLocIDs(id)
+		locIDs, err := client.FetchLocIDs(id, p.Outage.FeederID)
 		if err != nil {
 			log.Printf("    ✗ loc_ids fetch failed: %v", err)
 			failCount++
@@ -93,7 +161,7 @@ func main() {
 		pickedLocID := locIDs[rand.Intn(len(locIDs))]
 		log.Printf("    → loc_id=%d (picked from %d poles)", pickedLocID, len(locIDs))
 
-		// // Submit (Commented out in original)
+		// Submit (Commented out in original)
 		// if err := client.SubmitReason(id, pickedLocID, p.Rule.ReasonID); err != nil {
 		// 	log.Printf("    ✗ Submit failed: %v", err)
 		// 	failCount++
@@ -103,8 +171,9 @@ func main() {
 		// log.Printf("    ✓ Submitted")
 		// successCount++
 
-		// Throttle to avoid rate limiting
-		time.Sleep(300 * time.Millisecond)
+		// Rate limiting: delay between processing each outage
+		log.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
+		time.Sleep(time.Duration(config.DelayBetweenOutages) * time.Millisecond)
 	}
 
 	// ── Summary ──
