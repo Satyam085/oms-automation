@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"strconv"
 	"time"
+	_ "time/tzdata"
 
 	"oms-automtion/config"
 	"oms-automtion/models"
@@ -71,6 +72,14 @@ Common Reason IDs Used by Duration Rules:
 
 
 func main() {
+	// Force Indian Standard Time (IST) for all time operations
+	// This ensures consistent timestamps regardless of server timezone
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		log.Fatal("❌ Failed to load IST timezone:", err)
+	}
+	time.Local = ist
+
 	// Parse command-line flags
 	limitFlag := flag.Int("limit", 0, "Limit number of outages to process (0 = process all)")
 	flag.Parse()
