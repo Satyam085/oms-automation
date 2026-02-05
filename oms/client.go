@@ -57,8 +57,8 @@ func (c *Client) Login() error {
 	respBody, _ := io.ReadAll(resp.Body)
 
 	// DEBUG — remove after fixing
-	log.Printf("  [DEBUG] Login request body: %s", string(body))
-	log.Printf("  [DEBUG] Login status code: %d", resp.StatusCode)
+	// log.Printf("  [DEBUG] Login request body: %s", string(body))
+	// log.Printf("  [DEBUG] Login status code: %d", resp.StatusCode)
 	// log.Printf("  [DEBUG] Login raw response: %s", string(respBody))
 
 	if resp.StatusCode != 200 {

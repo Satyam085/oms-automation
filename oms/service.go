@@ -5,25 +5,34 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 
 	"oms-automtion/config"
 	"oms-automtion/models"
 )
 
 // FetchPendingOutages fetches all pending outages using pagination.
-func (c *Client) FetchPendingOutages() ([]models.Outage, error) {
+// If limit > 0, it stops fetching once the limit is reached.
+func (c *Client) FetchPendingOutages(limit int) ([]models.Outage, error) {
 	var all []models.Outage
 	offset := 0
 
 	for {
-		payload := models.PendingRequest{
-			FilteredData: []models.FilteredData{}, // Empty filter to match browser behavior
+		// Stop if we have enough outages
+		if limit > 0 && len(all) >= limit {
+			break
+		}
+
+		// Revert to the known working endpoint and payload
+		url := fmt.Sprintf("%s/reason/pending", config.BaseURL)
+		reqBody := models.PendingRequest{
+			FilteredData: []models.FilteredData{},
 			Offset:       offset,
 			Limit:        config.PageSize,
 		}
 
-		body, _ := json.Marshal(payload)
-		req, err := c.NewAPIRequest("POST", config.BaseURL+"/reason/pending", body)
+		body, _ := json.Marshal(reqBody)
+		req, err := c.NewAPIRequest("POST", url, body)
 		if err != nil {
 			return nil, err
 		}
@@ -40,9 +49,9 @@ func (c *Client) FetchPendingOutages() ([]models.Outage, error) {
 		}
 
 		// DEBUG: Print raw response for first page
-		if offset == 0 {
-			log.Printf("\n[DEBUG] Raw API Response (first page):\n%s\n", string(respBody))
-		}
+		// if offset == 0 {
+		// 	log.Printf("\n[DEBUG] Raw API Response (first page):\n%s\n", string(respBody))
+		// }
 
 		var pr models.PendingResponse
 		if err := json.Unmarshal(respBody, &pr); err != nil {
@@ -52,18 +61,21 @@ func (c *Client) FetchPendingOutages() ([]models.Outage, error) {
 		all = append(all, pr.Data...)
 		log.Printf("  [Fetch] offset=%d got=%d total=%d", offset, len(pr.Data), pr.TotalRecords)
 
-		// DEBUG: Only fetch first page for now
-		log.Println("  [DEBUG] Stopping after first page for debugging")
-		break
+		// Re-enabled pagination logic
+		if(limit > 0 && len(all) >= limit) || offset+config.PageSize >= pr.TotalRecords || len(pr.Data) == 0 {
+			break
+		}
+		offset += config.PageSize
 
-		// if offset+config.PageSize >= pr.TotalRecords || len(pr.Data) == 0 {
-		// 	break
-		// }
-		// offset += config.PageSize
-		// 
-		// // Rate limiting: delay between pagination requests
-		// time.Sleep(time.Duration(config.DelayBetweenPages) * time.Millisecond)
+		// Rate limiting: delay between pagination requests
+		time.Sleep(time.Duration(config.DelayBetweenPages) * time.Millisecond)
 	}
+	
+	// Trim to exact limit if we over-fetched
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	
 	return all, nil
 }
 
@@ -119,8 +131,8 @@ func (c *Client) FetchLocIDs(outageID string, feederID int) ([]int, error) {
 }
 
 // SubmitReason posts the selected reason and location for an outage.
-func (c *Client) SubmitReason(outageID string, feederID int, locID int, reasonID int) error {
-	url := fmt.Sprintf("%s/reason/%d/%s", config.BaseURL, feederID, outageID)
+func (c *Client) SubmitReason(outageID string, locID int, reasonID int) error {
+	url := fmt.Sprintf("%s/reason/outage/%s", config.BaseURL, outageID)
 
 	payload := []models.ReasonPayloadItem{{LocID: locID, ReasonID: reasonID}}
 	body, _ := json.Marshal(payload)

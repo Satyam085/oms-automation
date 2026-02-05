@@ -1,9 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"oms-automtion/config"
@@ -69,8 +71,23 @@ Common Reason IDs Used by Duration Rules:
 
 
 func main() {
+	// Parse command-line flags
+	limitFlag := flag.Int("limit", 0, "Limit number of outages to process (0 = process all)")
+	flag.Parse()
+	
+	// Support positional argument for limit (e.g. ./oms-automtion 22)
+	if len(flag.Args()) > 0 {
+		if val, err := strconv.Atoi(flag.Args()[0]); err == nil {
+			*limitFlag = val
+		}
+	}
+
 	rand.Seed(time.Now().UnixNano())
 	log.Println("═══ OMS Outage Reason Automation ═══")
+	
+	if *limitFlag > 0 {
+		log.Printf("⚙ Limit: Processing max %d outages\n", *limitFlag)
+	}
 
 	client := oms.NewClient()
 
@@ -82,7 +99,8 @@ func main() {
 
 	// ── Step 1 ──
 	log.Println("\n[Step 1] Fetching pending outages...")
-	outages, err := client.FetchPendingOutages()
+	// Pass the limit to fetch only what's needed
+	outages, err := client.FetchPendingOutages(*limitFlag)
 	if err != nil {
 		log.Fatalf("FATAL: %v", err)
 	}
@@ -96,12 +114,12 @@ func main() {
 	}
 
 	var processed []processedOutage
-	for i, o := range outages {
+	for _, o := range outages {
 		// DEBUG: Print first 3 outages in detail
-		if i < 3 {
-			log.Printf("\n[DEBUG] Outage #%d:\n  ID: %s\n  Duration: %q\n  OutageOccurAt: %q\n  OutageRestoreAt: %q\n  FeederName: %q\n",
-				i+1, o.ID, o.Duration, o.OutageOccurAt, o.OutageRestoreAt, o.FeederName)
-		}
+		// if i < 3 {
+		// 	log.Printf("\n[DEBUG] Outage #%d:\n  ID: %s\n  Duration: %q\n  OutageOccurAt: %q\n  OutageRestoreAt: %q\n  FeederName: %q\n",
+		// 		i+1, o.ID, o.Duration, o.OutageOccurAt, o.OutageRestoreAt, o.FeederName)
+		// }
 
 		// Try to calculate duration from timestamps first
 		hours, err := utils.CalculateDurationFromTimestamps(o.OutageOccurAt, o.OutageRestoreAt)
@@ -133,13 +151,20 @@ func main() {
 	}
 	fmt.Println("└────────────────┴─────────────────┴────────┴────────────────┴──────────────────┴──────────┘")
 
+	// Apply limit if specified
+	toProcess := processed
+	if *limitFlag > 0 && len(processed) > *limitFlag {
+		toProcess = processed[:*limitFlag]
+		log.Printf("\n⚙ Limiting to first %d outages (out of %d total)\n", *limitFlag, len(processed))
+	}
+
 	// ── Steps 2 & 3: fetch loc_id → submit reason ──
-	log.Printf("\n[Step 2 & 3] Processing %d outages...\n", len(processed))
+	log.Printf("\n[Step 2 & 3] Processing %d outages...\n", len(toProcess))
 
 	successCount := 0
 	failCount := 0
 
-	for i, p := range processed {
+	for i, p := range toProcess {
 		id := p.Outage.ID
 		
 		// Skip outages that don't match any rule (duration > 8 hours and != 15.73)
@@ -147,12 +172,12 @@ func main() {
 		is1573 := p.DurationHours >= 15.72 && p.DurationHours <= 15.74
 		if p.DurationHours > 8 && !is1573 {
 			log.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (no matching rule)",
-				i+1, len(processed), id, p.DurationHours)
+				i+1, len(toProcess), id, p.DurationHours)
 			continue
 		}
 		
 		log.Printf("  [%d/%d] Outage %s | %.2fh | reason_id=%d",
-			i+1, len(processed), id, p.DurationHours, p.Rule.ReasonID)
+			i+1, len(toProcess), id, p.DurationHours, p.Rule.ReasonID)
 
 		// Fetch available loc_ids from feederPointGeoJson
 		locIDs, err := client.FetchLocIDs(id, p.Outage.FeederID)
@@ -171,15 +196,15 @@ func main() {
 		pickedLocID := locIDs[rand.Intn(len(locIDs))]
 		log.Printf("    → loc_id=%d (picked from %d poles)", pickedLocID, len(locIDs))
 
-		// Submit (Commented out in original)
-		// if err := client.SubmitReason(id, pickedLocID, p.Rule.ReasonID); err != nil {
-		// 	log.Printf("    ✗ Submit failed: %v", err)
-		// 	failCount++
-		// 	continue
-		// }
+		// Submit
+		if err := client.SubmitReason(id, pickedLocID, p.Rule.ReasonID); err != nil {
+			log.Printf("    ✗ Submit failed: %v", err)
+			failCount++
+			continue
+		}
 
-		// log.Printf("    ✓ Submitted")
-		// successCount++
+		log.Printf("    ✓ Submitted")
+		successCount++
 
 		// Rate limiting: delay between processing each outage
 		log.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
