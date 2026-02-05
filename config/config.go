@@ -24,9 +24,10 @@ var Creds = struct {
 }
 
 var DurationRules = []models.DurationRule{
-	{Label: "< 1 hour", MaxHours: 1, ReasonID: 25},     // No Cause found
-	{Label: "1–4 hours", MaxHours: 4, ReasonID: 28},    // Relay Problems
-	{Label: "4–8 hours", MaxHours: 8, ReasonID: 6},     // Cable Wire Fault
-	{Label: "8–24 hours", MaxHours: 24, ReasonID: 30},  // Transformer Failure
-	{Label: "> 24 hours", MaxHours: 9999, ReasonID: 9}, // Conductor Snapped HT Line
+	{Label: "≤ 15 min", MaxHours: 0.25, ReasonID: 21},      // Jumper Touching (0-15 minutes)
+	{Label: "15 min–1 hr", MaxHours: 1, ReasonID: 20},      // Jumper Burnt (15 min - 1 hour)
+	{Label: "1–3 hours", MaxHours: 3, ReasonID: 31},        // Tree / Tree Branch Falling (1-3 hours)
+	{Label: "3–8 hours", MaxHours: 8, ReasonID: 9},         // Conductor Snapped HT Line (3-8 hours)
+	{Label: "~15.73 hours", MaxHours: 15.73, ReasonID: 25}, // No Cause found (exactly 15.73 hours)
+	// Any other duration will be skipped
 }

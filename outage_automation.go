@@ -141,6 +141,16 @@ func main() {
 
 	for i, p := range processed {
 		id := p.Outage.ID
+		
+		// Skip outages that don't match any rule (duration > 8 hours and != 15.73)
+		// Use tolerance for floating-point comparison (within 0.01 hours = ~36 seconds)
+		is1573 := p.DurationHours >= 15.72 && p.DurationHours <= 15.74
+		if p.DurationHours > 8 && !is1573 {
+			log.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (no matching rule)",
+				i+1, len(processed), id, p.DurationHours)
+			continue
+		}
+		
 		log.Printf("  [%d/%d] Outage %s | %.2fh | reason_id=%d",
 			i+1, len(processed), id, p.DurationHours, p.Rule.ReasonID)
 
