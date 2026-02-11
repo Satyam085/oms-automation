@@ -15,27 +15,35 @@ func CalculateDurationFromTimestamps(occurAt, restoreAt string) (float64, error)
 	occurAt = strings.TrimSpace(occurAt)
 	restoreAt = strings.TrimSpace(restoreAt)
 
+	fmt.Printf("[DEBUG] occurAt=%q restoreAt=%q\n", occurAt, restoreAt)
+
 	if occurAt == "" {
 		return 0, fmt.Errorf("outage_occur_at is empty")
 	}
 
 	occurTime, err := time.Parse(time.RFC3339, occurAt)
 	if err != nil {
+		fmt.Printf("[DEBUG] occurAt parse failed: %v\n", err)
 		return 0, fmt.Errorf("parse outage_occur_at %q: %w", occurAt, err)
 	}
 
 	var restoreTime time.Time
 	if restoreAt == "" {
-		// Ongoing outage
+		fmt.Println("[DEBUG] restoreAt empty -> using time.Now()")
 		restoreTime = time.Now().UTC()
 	} else {
 		restoreTime, err = time.Parse(time.RFC3339, restoreAt)
 		if err != nil {
+			fmt.Printf("[DEBUG] restoreAt parse failed: %v\n", err)
 			return 0, fmt.Errorf("parse outage_restore_at %q: %w", restoreAt, err)
 		}
 	}
 
+	fmt.Printf("[DEBUG] occurTime=%v restoreTime=%v\n", occurTime, restoreTime)
+
 	duration := restoreTime.Sub(occurTime)
+
+	fmt.Printf("[DEBUG] raw duration=%v\n", duration)
 
 	if duration < 0 {
 		return 0, fmt.Errorf(
@@ -45,7 +53,11 @@ func CalculateDurationFromTimestamps(occurAt, restoreAt string) (float64, error)
 		)
 	}
 
-	return duration.Hours(), nil
+	hours := duration.Hours()
+
+	fmt.Printf("[DEBUG] calculated hours=%.4f\n", hours)
+
+	return hours, nil
 }
 
 // ParseDuration parses duration string "HH:MM:SS" or "HH:MM:SS.mmm"
