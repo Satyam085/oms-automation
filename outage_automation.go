@@ -70,7 +70,6 @@ Common Reason IDs Used by Duration Rules:
   - ID 30: Transformer Failure (8-24 hours, > 24 hours)
 */
 
-
 func main() {
 	// Force Indian Standard Time (IST) for all time operations
 	// This ensures consistent timestamps regardless of server timezone
@@ -83,7 +82,7 @@ func main() {
 	// Parse command-line flags
 	limitFlag := flag.Int("limit", 0, "Limit number of outages to process (0 = process all)")
 	flag.Parse()
-	
+
 	// Support positional argument for limit (e.g. ./oms-automtion 22)
 	if len(flag.Args()) > 0 {
 		if val, err := strconv.Atoi(flag.Args()[0]); err == nil {
@@ -93,7 +92,7 @@ func main() {
 
 	rand.Seed(time.Now().UnixNano())
 	log.Println("═══ OMS Outage Reason Automation ═══")
-	
+
 	if *limitFlag > 0 {
 		log.Printf("⚙ Limit: Processing max %d outages\n", *limitFlag)
 	}
@@ -124,41 +123,40 @@ func main() {
 
 	var processed []processedOutage
 	for _, o := range outages {
-		// DEBUG: Print first 3 outages in detail
-		// if i < 3 {
-		// 	log.Printf("\n[DEBUG] Outage #%d:\n  ID: %s\n  Duration: %q\n  OutageOccurAt: %q\n  OutageRestoreAt: %q\n  FeederName: %q\n",
-		// 		i+1, o.ID, o.Duration, o.OutageOccurAt, o.OutageRestoreAt, o.FeederName)
-		// }
-
-		// Try to calculate duration from timestamps first
-		hours, err := utils.CalculateDurationFromTimestamps(o.OutageOccurAt, o.OutageRestoreAt)
+		hours, err := utils.CalculateDurationFromTimestamps(
+			o.OutageOccurDate, o.OutageOccurTime,
+			o.OutageRestoreDate, o.OutageRestoreTime,
+		)
 		if err != nil {
-			// Fallback: try parsing the pre-calculated duration field
-			hours, err = utils.ParseDuration(o.Duration)
-			if err != nil {
-				log.Printf("  [WARN] Skip %s: %v", o.ID, err)
-				continue
-			}
+			log.Printf("  [WARN] Skip %s: %v", o.ID, err)
+			continue
 		}
-		
+
+		rule := utils.ClassifyRule(hours, config.DurationRules)
+
+		// Special rule: KUMBHIYA feeder with duration > 6 hours → always reason 25 (No Cause Found)
+		if o.FeederName == "KUMBHIYA" && hours > 6 {
+			rule = models.DurationRule{Label: "KUMBHIYA >6h", MaxHours: 0, ReasonID: 25}
+		}
+
 		processed = append(processed, processedOutage{
 			Outage:        o,
 			DurationHours: hours,
-			Rule:          utils.ClassifyRule(hours, config.DurationRules),
+			Rule:          rule,
 		})
 	}
 
 	// ── Print summary table ──
 	fmt.Println()
-	fmt.Println("┌────────────────┬─────────────────┬────────┬────────────────┬──────────────────┬──────────┐")
-	fmt.Println("│ Outage ID      │ Duration        │ Hours  │ Bucket         │ Feeder           │ ReasonID │")
-	fmt.Println("├────────────────┼─────────────────┼────────┼────────────────┼──────────────────┼──────────┤")
+	fmt.Println("┌────────────────┬────────┬────────────────┬──────────────────┬──────────┐")
+	fmt.Println("│ Outage ID      │ Hours  │ Bucket         │ Feeder           │ ReasonID │")
+	fmt.Println("├────────────────┼────────┼────────────────┼──────────────────┼──────────┤")
 	for _, p := range processed {
-		fmt.Printf("│ %-14s │ %-15s │ %5.2f  │ %-14s │ %-16s │ %-8d │\n",
-			p.Outage.ID, p.Outage.Duration, p.DurationHours,
+		fmt.Printf("│ %-14s │ %5.2f  │ %-14s │ %-16s │ %-8d │\n",
+			p.Outage.ID, p.DurationHours,
 			p.Rule.Label, p.Outage.FeederName, p.Rule.ReasonID)
 	}
-	fmt.Println("└────────────────┴─────────────────┴────────┴────────────────┴──────────────────┴──────────┘")
+	fmt.Println("└────────────────┴────────┴────────────────┴──────────────────┴──────────┘")
 
 	// Apply limit if specified
 	toProcess := processed
@@ -175,16 +173,18 @@ func main() {
 
 	for i, p := range toProcess {
 		id := p.Outage.ID
-		
+
 		// Skip outages that don't match any rule (duration > 8 hours and != 15.73)
+		// But never skip feeder-specific overrides (e.g. KUMBHIYA >6h)
 		// Use tolerance for floating-point comparison (within 0.01 hours = ~36 seconds)
+		isOverride := p.Rule.MaxHours == 0 && p.Rule.ReasonID != 0
 		is1573 := p.DurationHours >= 15.72 && p.DurationHours <= 15.74
-		if p.DurationHours > 8 && !is1573 {
+		if p.DurationHours > 8 && !is1573 && !isOverride {
 			log.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (no matching rule)",
 				i+1, len(toProcess), id, p.DurationHours)
 			continue
 		}
-		
+
 		log.Printf("  [%d/%d] Outage %s | %.2fh | reason_id=%d",
 			i+1, len(toProcess), id, p.DurationHours, p.Rule.ReasonID)
 

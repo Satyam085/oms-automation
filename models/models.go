@@ -30,17 +30,22 @@ type PendingRequest struct {
 }
 
 type Outage struct {
-	ID               string `json:"id"`
-	InterruptionType string `json:"interruption_type"`
-	OutageType       int    `json:"outage_type"`
-	OutageTypeName   string `json:"outage_type_name"`
-	FeederID         int    `json:"feeder_id"`
-	FeederName       string `json:"feeder_name"`
-	FeederCategory   string `json:"feeder_category"`
-	OutageOccurAt    string `json:"outage_occur_at"`
-	OutageRestoreAt  string `json:"outage_restore_at"`
-	Duration         string `json:"duration"`
-	SSName           string `json:"ss_name"`
+	ID                 string `json:"id"`
+	InterruptionType   string `json:"interruption_type"`
+	OutageType         int    `json:"outage_type"`
+	OutageTypeName     string `json:"outage_type_name"`
+	FeederID           int    `json:"feeder_id"`
+	FeederName         string `json:"feeder_name"`
+	FeederCategory     string `json:"feeder_category"`
+	OutageOccurDate    string `json:"outage_occur_date"`
+	OutageOccurTime    string `json:"outage_occur_time"`
+	OutageRestoreDate  string `json:"outage_restore_date"`
+	OutageRestoreTime  string `json:"outage_restore_time"`
+	SSName             string `json:"ss_name"`
+	DiscomCircleName   string `json:"discom_circle_name"`
+	DiscomDivisionName string `json:"discom_division_name"`
+	CompanyName        string `json:"company_name"`
+	SubdivisionName    string `json:"subdivision_name"`
 }
 
 type PendingResponse struct {

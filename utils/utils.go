@@ -10,54 +10,45 @@ import (
 )
 
 // CalculateDurationFromTimestamps calculates duration in hours
-// from RFC3339 timestamps (e.g. "2026-01-22T10:48:53.816Z")
-func CalculateDurationFromTimestamps(occurAt, restoreAt string) (float64, error) {
-	occurAt = strings.TrimSpace(occurAt)
-	restoreAt = strings.TrimSpace(restoreAt)
+// from separate date and time strings (e.g. "2026-01-28" + "17:37:25.743")
+func CalculateDurationFromTimestamps(occurDate, occurTime, restoreDate, restoreTime string) (float64, error) {
+	occurDate = strings.TrimSpace(occurDate)
+	occurTime = strings.TrimSpace(occurTime)
+	restoreDate = strings.TrimSpace(restoreDate)
+	restoreTime = strings.TrimSpace(restoreTime)
 
-	fmt.Printf("[DEBUG] occurAt=%q restoreAt=%q\n", occurAt, restoreAt)
-
-	if occurAt == "" {
-		return 0, fmt.Errorf("outage_occur_at is empty")
+	if occurDate == "" || occurTime == "" {
+		return 0, fmt.Errorf("outage occur date/time is empty")
 	}
 
-	occurTime, err := time.Parse(time.RFC3339, occurAt)
+	// Strip sub-second precision for simpler parsing
+	occurTimeClean := strings.Split(occurTime, ".")[0]
+	occurStr := occurDate + " " + occurTimeClean
+
+	const layout = "2006-01-02 15:04:05"
+	occurParsed, err := time.Parse(layout, occurStr)
 	if err != nil {
-		fmt.Printf("[DEBUG] occurAt parse failed: %v\n", err)
-		return 0, fmt.Errorf("parse outage_occur_at %q: %w", occurAt, err)
+		return 0, fmt.Errorf("parse occur %q: %w", occurStr, err)
 	}
 
-	var restoreTime time.Time
-	if restoreAt == "" {
-		fmt.Println("[DEBUG] restoreAt empty -> using time.Now()")
-		restoreTime = time.Now().UTC()
+	var restoreParsed time.Time
+	if restoreDate == "" || restoreTime == "" {
+		restoreParsed = time.Now()
 	} else {
-		restoreTime, err = time.Parse(time.RFC3339, restoreAt)
+		restoreTimeClean := strings.Split(restoreTime, ".")[0]
+		restoreStr := restoreDate + " " + restoreTimeClean
+		restoreParsed, err = time.Parse(layout, restoreStr)
 		if err != nil {
-			fmt.Printf("[DEBUG] restoreAt parse failed: %v\n", err)
-			return 0, fmt.Errorf("parse outage_restore_at %q: %w", restoreAt, err)
+			return 0, fmt.Errorf("parse restore %q: %w", restoreStr, err)
 		}
 	}
 
-	fmt.Printf("[DEBUG] occurTime=%v restoreTime=%v\n", occurTime, restoreTime)
-
-	duration := restoreTime.Sub(occurTime)
-
-	fmt.Printf("[DEBUG] raw duration=%v\n", duration)
-
-	if duration < 0 {
-		return 0, fmt.Errorf(
-			"negative duration: restore_at (%s) before occur_at (%s)",
-			restoreAt,
-			occurAt,
-		)
+	dur := restoreParsed.Sub(occurParsed)
+	if dur < 0 {
+		return 0, fmt.Errorf("negative duration: restore before occur")
 	}
 
-	hours := duration.Hours()
-
-	fmt.Printf("[DEBUG] calculated hours=%.4f\n", hours)
-
-	return hours, nil
+	return dur.Hours(), nil
 }
 
 // ParseDuration parses duration string "HH:MM:SS" or "HH:MM:SS.mmm"
