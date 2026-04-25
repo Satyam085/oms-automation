@@ -1,2 +1,6 @@
 .agent
 .agents
+.env
+.env.local
+app
+oms-automation

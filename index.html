@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>OMS Outage Automation</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #181b22;
+    --border: #2a2f3a;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #4f8cff;
+    --ok: #34d399;
+    --fail: #f87171;
+    --skip: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 6px; flex: 1 1 160px; min-width: 0; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input {
+    background: #0c0e13; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-size: 16px; /* 16px prevents iOS auto-zoom */
+    font-family: inherit; width: 100%;
+  }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  button {
+    background: var(--accent); color: #fff; border: 0;
+    padding: 11px 18px; border-radius: 6px; font-size: 15px;
+    cursor: pointer; font-weight: 500; min-height: 44px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat {
+    background: #0c0e13; border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; text-align: center;
+  }
+  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 26px; font-weight: 600; margin-top: 4px; }
+  .stat.ok .value { color: var(--ok); }
+  .stat.fail .value { color: var(--fail); }
+  .stat.skip .value { color: var(--skip); }
+  .banner {
+    padding: 10px 14px; border-radius: 6px;
+    font-size: 14px; margin-bottom: 12px;
+    word-break: break-word;
+  }
+  .banner.ok { background: rgba(52, 211, 153, 0.12); border: 1px solid var(--ok); color: var(--ok); }
+  .banner.fail { background: rgba(248, 113, 113, 0.12); border: 1px solid var(--fail); color: var(--fail); }
+  .banner.info { background: rgba(79, 140, 255, 0.12); border: 1px solid var(--accent); color: var(--accent); }
+  pre.logs {
+    background: #0c0e13; border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; line-height: 1.5;
+    white-space: pre; overflow-x: auto; max-height: 480px; overflow-y: auto;
+    margin: 0; color: #cbd2dd;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: -4px; padding: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td.note { white-space: normal; min-width: 180px; color: var(--muted); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+  td.status { font-weight: 500; }
+  td.status.submitted { color: var(--ok); }
+  td.status.failed { color: var(--fail); }
+  td.status.skipped, td.status.parse_error { color: var(--skip); }
+  .hidden { display: none; }
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff; border-radius: 50%;
+    display: inline-block; animation: spin 0.7s linear infinite;
+    vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Tablet & below */
+  @media (max-width: 720px) {
+    body { padding: 16px; }
+    .wrap { max-width: 100%; }
+    .card { padding: 14px; border-radius: 8px; }
+    .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .stat { padding: 10px; }
+    .stat .value { font-size: 22px; }
+    h1 { font-size: 18px; }
+    pre.logs { font-size: 11px; padding: 12px; max-height: 360px; }
+    th, td { padding: 7px 8px; font-size: 12px; }
+  }
+
+  /* Phone */
+  @media (max-width: 480px) {
+    body { padding: 12px; }
+    .row { gap: 10px; }
+    .field { flex-basis: 100%; }
+    button { width: 100%; }
+    .sub { font-size: 12px; margin-bottom: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OMS Outage Automation</h1>
+  <div class="sub">Click run to fetch pending outages and submit reasons.</div>
+
+  <div class="card">
+    <div class="row">
+      <div class="field">
+        <label for="token">Auth Token</label>
+        <input id="token" type="password" placeholder="bearer token" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="limit">Limit (0 = all)</label>
+        <input id="limit" type="number" min="0" value="0" />
+      </div>
+      <button id="runBtn">Run Automation</button>
+    </div>
+  </div>
+
+  <div id="banner" class="hidden"></div>
+
+  <div id="statsCard" class="card hidden">
+    <div class="stats">
+      <div class="stat"><div class="label">Total</div><div class="value" id="stTotal">0</div></div>
+      <div class="stat ok"><div class="label">Success</div><div class="value" id="stOk">0</div></div>
+      <div class="stat fail"><div class="label">Failed</div><div class="value" id="stFail">0</div></div>
+      <div class="stat skip"><div class="label">Skipped</div><div class="value" id="stSkip">0</div></div>
+    </div>
+  </div>
+
+  <div id="rowsCard" class="card hidden">
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Outage ID</th><th>Hours</th><th>Bucket</th><th>Feeder</th><th>Reason</th><th>Status</th><th>Note</th></tr>
+        </thead>
+        <tbody id="rowsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="logsCard" class="card hidden">
+    <div style="color: var(--muted); font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px;">Run log</div>
+    <pre class="logs" id="logs"></pre>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const tokenInput = $('token');
+  const limitInput = $('limit');
+  const runBtn = $('runBtn');
+  const banner = $('banner');
+
+  // Persist token in localStorage so user doesn't retype it.
+  tokenInput.value = localStorage.getItem('oms_token') || '';
+  tokenInput.addEventListener('change', () => {
+    localStorage.setItem('oms_token', tokenInput.value);
+  });
+
+  function showBanner(kind, msg) {
+    banner.className = 'banner ' + kind;
+    banner.textContent = msg;
+    banner.classList.remove('hidden');
+  }
+
+  function setStats(r) {
+    $('stTotal').textContent = r.total ?? 0;
+    $('stOk').textContent = r.success ?? 0;
+    $('stFail').textContent = r.failed ?? 0;
+    $('stSkip').textContent = r.skipped ?? 0;
+    $('statsCard').classList.remove('hidden');
+  }
+
+  function renderRows(rows) {
+    const body = $('rowsBody');
+    body.innerHTML = '';
+    if (!rows || rows.length === 0) {
+      $('rowsCard').classList.add('hidden');
+      return;
+    }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${r.outage_id ?? ''}</td>
+        <td>${(r.hours ?? 0).toFixed(2)}</td>
+        <td>${r.bucket ?? ''}</td>
+        <td>${r.feeder ?? ''}</td>
+        <td>${r.reason_id ?? ''}</td>
+        <td class="status ${r.status}">${r.status}</td>
+        <td class="note">${r.note ?? ''}</td>
+      `;
+      body.appendChild(tr);
+    }
+    $('rowsCard').classList.remove('hidden');
+  }
+
+  async function run() {
+    const token = tokenInput.value.trim();
+    if (!token) { showBanner('fail', 'Auth token is required'); return; }
+    localStorage.setItem('oms_token', token);
+
+    const limit = parseInt(limitInput.value, 10) || 0;
+
+    runBtn.disabled = true;
+    runBtn.innerHTML = '<span class="spinner"></span>Running...';
+    showBanner('info', 'Running — this may take a while if many outages need processing.');
+    $('statsCard').classList.add('hidden');
+    $('rowsCard').classList.add('hidden');
+    $('logsCard').classList.add('hidden');
+
+    try {
+      const res = await fetch(`/run?limit=${limit}`, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (res.status === 401) { showBanner('fail', 'Unauthorized — check your token.'); return; }
+      const data = await res.json();
+
+      if (data.logs) {
+        $('logs').textContent = data.logs;
+        $('logsCard').classList.remove('hidden');
+      }
+      if (data.result) {
+        setStats(data.result);
+        renderRows(data.result.rows);
+      }
+      if (data.ok) {
+        showBanner('ok', `Run complete — ${data.result?.success ?? 0} submitted, ${data.result?.failed ?? 0} failed, ${data.result?.skipped ?? 0} skipped.`);
+      } else {
+        showBanner('fail', 'Run failed: ' + (data.error || 'unknown error'));
+      }
+    } catch (e) {
+      showBanner('fail', 'Request error: ' + e.message);
+    } finally {
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run Automation';
+    }
+  }
+
+  runBtn.addEventListener('click', run);
+</script>
+</body>
+</html>

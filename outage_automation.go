@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
+	"os"
 	"strconv"
 	"time"
 	_ "time/tzdata"
@@ -44,7 +46,7 @@ import (
 ║ 25  ║ No Cause found                                                       ║
 ║ 27  ║ Overhead ABC conductor fault                                         ║
 ║ 28  ║ Relay Problems                                                       ║
-║ 29  ║ Shakle Puncture                                                      ║
+║ 29  ║ Shakle Puncture                                                     ║
 ║ 30  ║ Transformer Failure                                                  ║
 ║ 31  ║ Tree / Tree Branch Falling                                           ║
 ║ 32  ║ Under ground cable fault                                             ║
@@ -63,58 +65,57 @@ import (
 ║ 112 ║ Line Fabrication Damage                                              ║
 ║ 113 ║ Heavy Wind                                                           ║
 ╚═════╩══════════════════════════════════════════════════════════════════════╝
-
-Common Reason IDs Used by Duration Rules:
-  - ID 25: No Cause found (< 1 hour)
-  - ID 28: Relay Problems (1-4 hours, 4-8 hours)
-  - ID 30: Transformer Failure (8-24 hours, > 24 hours)
 */
 
-func main() {
-	// Force Indian Standard Time (IST) for all time operations
-	// This ensures consistent timestamps regardless of server timezone
-	ist, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		log.Fatal("❌ Failed to load IST timezone:", err)
-	}
-	time.Local = ist
+// ProcessedRow is one row in the result table returned by RunAutomation.
+type ProcessedRow struct {
+	OutageID string  `json:"outage_id"`
+	Hours    float64 `json:"hours"`
+	Bucket   string  `json:"bucket"`
+	Feeder   string  `json:"feeder"`
+	ReasonID int     `json:"reason_id"`
+	Status   string  `json:"status"` // "submitted" | "skipped" | "failed" | "parse_error"
+	Note     string  `json:"note,omitempty"`
+}
 
-	// Parse command-line flags
-	limitFlag := flag.Int("limit", 0, "Limit number of outages to process (0 = process all)")
-	flag.Parse()
+// RunResult is what the HTTP /run endpoint returns and what the CLI prints.
+type RunResult struct {
+	Total      int            `json:"total"`
+	Success    int            `json:"success"`
+	Failed     int            `json:"failed"`
+	Skipped    int            `json:"skipped"`
+	Rows       []ProcessedRow `json:"rows"`
+	StartedAt  time.Time      `json:"started_at"`
+	DurationMs int64          `json:"duration_ms"`
+}
 
-	// Support positional argument for limit (e.g. ./oms-automtion 22)
-	if len(flag.Args()) > 0 {
-		if val, err := strconv.Atoi(flag.Args()[0]); err == nil {
-			*limitFlag = val
-		}
-	}
+// RunAutomation executes the full pipeline once. All progress lines are
+// written to `out`; the structured outcome is returned in RunResult.
+func RunAutomation(limit int, out io.Writer) (*RunResult, error) {
+	lg := log.New(out, "", log.LstdFlags)
 
-	rand.Seed(time.Now().UnixNano())
-	log.Println("═══ OMS Outage Reason Automation ═══")
+	startedAt := time.Now()
+	result := &RunResult{StartedAt: startedAt}
 
-	if *limitFlag > 0 {
-		log.Printf("⚙ Limit: Processing max %d outages\n", *limitFlag)
+	lg.Println("═══ OMS Outage Reason Automation ═══")
+	if limit > 0 {
+		lg.Printf("⚙ Limit: Processing max %d outages", limit)
 	}
 
 	client := oms.NewClient()
 
-	// ── Step 0: Login & get token ──
-	log.Println("\n[Step 0] Logging in...")
+	lg.Println("[Step 0] Logging in...")
 	if err := client.Login(); err != nil {
-		log.Fatalf("FATAL: login failed: %v", err)
+		return result, fmt.Errorf("login failed: %w", err)
 	}
 
-	// ── Step 1 ──
-	log.Println("\n[Step 1] Fetching pending outages...")
-	// Pass the limit to fetch only what's needed
-	outages, err := client.FetchPendingOutages(*limitFlag)
+	lg.Println("[Step 1] Fetching pending outages...")
+	outages, err := client.FetchPendingOutages(limit)
 	if err != nil {
-		log.Fatalf("FATAL: %v", err)
+		return result, fmt.Errorf("fetch pending: %w", err)
 	}
-	log.Printf("  → Fetched %d outages\n", len(outages))
+	lg.Printf("  → Fetched %d outages", len(outages))
 
-	// ── Parse & classify durations ──
 	type processedOutage struct {
 		Outage        models.Outage
 		DurationHours float64
@@ -128,13 +129,19 @@ func main() {
 			o.OutageRestoreDate, o.OutageRestoreTime,
 		)
 		if err != nil {
-			log.Printf("  [WARN] Skip %s: %v", o.ID, err)
+			lg.Printf("  [WARN] Skip %s: %v", o.ID, err)
+			result.Rows = append(result.Rows, ProcessedRow{
+				OutageID: o.ID,
+				Feeder:   o.FeederName,
+				Status:   "parse_error",
+				Note:     err.Error(),
+			})
 			continue
 		}
 
 		rule := utils.ClassifyRule(hours, config.DurationRules)
 
-		// Special rule: KUMBHIYA feeder with duration > 6 hours → always reason 25 (No Cause Found)
+		// Special rule: KUMBHIYA feeder with duration > 6 hours → reason 25
 		if o.FeederName == "KUMBHIYA" && hours > 6 {
 			rule = models.DurationRule{Label: "KUMBHIYA >6h", MaxHours: 0, ReasonID: 25}
 		}
@@ -146,85 +153,128 @@ func main() {
 		})
 	}
 
-	// ── Print summary table ──
-	fmt.Println()
-	fmt.Println("┌────────────────┬────────┬────────────────┬──────────────────┬──────────┐")
-	fmt.Println("│ Outage ID      │ Hours  │ Bucket         │ Feeder           │ ReasonID │")
-	fmt.Println("├────────────────┼────────┼────────────────┼──────────────────┼──────────┤")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "┌────────────────┬────────┬────────────────┬──────────────────┬──────────┐")
+	fmt.Fprintln(out, "│ Outage ID      │ Hours  │ Bucket         │ Feeder           │ ReasonID │")
+	fmt.Fprintln(out, "├────────────────┼────────┼────────────────┼──────────────────┼──────────┤")
 	for _, p := range processed {
-		fmt.Printf("│ %-14s │ %5.2f  │ %-14s │ %-16s │ %-8d │\n",
+		fmt.Fprintf(out, "│ %-14s │ %5.2f  │ %-14s │ %-16s │ %-8d │\n",
 			p.Outage.ID, p.DurationHours,
 			p.Rule.Label, p.Outage.FeederName, p.Rule.ReasonID)
 	}
-	fmt.Println("└────────────────┴────────┴────────────────┴──────────────────┴──────────┘")
+	fmt.Fprintln(out, "└────────────────┴────────┴────────────────┴──────────────────┴──────────┘")
 
-	// Apply limit if specified
 	toProcess := processed
-	if *limitFlag > 0 && len(processed) > *limitFlag {
-		toProcess = processed[:*limitFlag]
-		log.Printf("\n⚙ Limiting to first %d outages (out of %d total)\n", *limitFlag, len(processed))
+	if limit > 0 && len(processed) > limit {
+		toProcess = processed[:limit]
+		lg.Printf("⚙ Limiting to first %d outages (out of %d total)", limit, len(processed))
 	}
 
-	// ── Steps 2 & 3: fetch loc_id → submit reason ──
-	log.Printf("\n[Step 2 & 3] Processing %d outages...\n", len(toProcess))
-
-	successCount := 0
-	failCount := 0
+	result.Total = len(toProcess)
+	lg.Printf("[Step 2 & 3] Processing %d outages...", len(toProcess))
 
 	for i, p := range toProcess {
 		id := p.Outage.ID
+		row := ProcessedRow{
+			OutageID: id,
+			Hours:    p.DurationHours,
+			Bucket:   p.Rule.Label,
+			Feeder:   p.Outage.FeederName,
+			ReasonID: p.Rule.ReasonID,
+		}
 
-		// Skip outages that don't match any rule (duration > 8 hours and != 15.73)
-		// But never skip feeder-specific overrides (e.g. KUMBHIYA >6h)
-		// Use tolerance for floating-point comparison (within 0.01 hours = ~36 seconds)
 		isOverride := p.Rule.MaxHours == 0 && p.Rule.ReasonID != 0
 		is1573 := p.DurationHours >= 15.72 && p.DurationHours <= 15.74
 		if p.DurationHours > 8 && !is1573 && !isOverride {
-			log.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (no matching rule)",
+			lg.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (no matching rule)",
 				i+1, len(toProcess), id, p.DurationHours)
+			row.Status = "skipped"
+			row.Note = "no matching rule"
+			result.Rows = append(result.Rows, row)
+			result.Skipped++
 			continue
 		}
 
-		log.Printf("  [%d/%d] Outage %s | %.2fh | reason_id=%d",
+		lg.Printf("  [%d/%d] Outage %s | %.2fh | reason_id=%d",
 			i+1, len(toProcess), id, p.DurationHours, p.Rule.ReasonID)
 
-		// Fetch available loc_ids from feederPointGeoJson
 		locIDs, err := client.FetchLocIDs(id, p.Outage.FeederID)
 		if err != nil {
-			log.Printf("    ✗ loc_ids fetch failed: %v", err)
-			failCount++
+			lg.Printf("    ✗ loc_ids fetch failed: %v", err)
+			row.Status = "failed"
+			row.Note = "loc_ids fetch: " + err.Error()
+			result.Rows = append(result.Rows, row)
+			result.Failed++
 			continue
 		}
 		if len(locIDs) == 0 {
-			log.Printf("    ✗ No loc_ids in GeoJSON")
-			failCount++
+			lg.Printf("    ✗ No loc_ids in GeoJSON")
+			row.Status = "failed"
+			row.Note = "no loc_ids in GeoJSON"
+			result.Rows = append(result.Rows, row)
+			result.Failed++
 			continue
 		}
 
-		// Pick random loc_id
 		pickedLocID := locIDs[rand.Intn(len(locIDs))]
-		log.Printf("    → loc_id=%d (picked from %d poles)", pickedLocID, len(locIDs))
+		lg.Printf("    → loc_id=%d (picked from %d poles)", pickedLocID, len(locIDs))
 
-		// Submit
 		if err := client.SubmitReason(id, pickedLocID, p.Rule.ReasonID); err != nil {
-			log.Printf("    ✗ Submit failed: %v", err)
-			failCount++
+			lg.Printf("    ✗ Submit failed: %v", err)
+			row.Status = "failed"
+			row.Note = "submit: " + err.Error()
+			result.Rows = append(result.Rows, row)
+			result.Failed++
 			continue
 		}
 
-		log.Printf("    ✓ Submitted")
-		successCount++
+		lg.Printf("    ✓ Submitted")
+		row.Status = "submitted"
+		result.Rows = append(result.Rows, row)
+		result.Success++
 
-		// Rate limiting: delay between processing each outage
-		log.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
+		lg.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
 		time.Sleep(time.Duration(config.DelayBetweenOutages) * time.Millisecond)
 	}
 
-	// ── Summary ──
-	fmt.Println()
-	fmt.Println("─── Results ───")
-	fmt.Printf("  Total:   %d\n", len(processed))
-	fmt.Printf("  Success: %d\n", successCount)
-	fmt.Printf("  Failed:  %d\n", failCount)
-	log.Println("\n═══ Done ═══")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "─── Results ───")
+	fmt.Fprintf(out, "  Total:   %d\n", result.Total)
+	fmt.Fprintf(out, "  Success: %d\n", result.Success)
+	fmt.Fprintf(out, "  Failed:  %d\n", result.Failed)
+	fmt.Fprintf(out, "  Skipped: %d\n", result.Skipped)
+	lg.Println("═══ Done ═══")
+
+	result.DurationMs = time.Since(startedAt).Milliseconds()
+	return result, nil
+}
+
+func main() {
+	// Force IST for all time operations regardless of host TZ.
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		log.Fatal("❌ Failed to load IST timezone:", err)
+	}
+	time.Local = ist
+	rand.Seed(time.Now().UnixNano())
+
+	serverFlag := flag.Bool("server", false, "Run as HTTP server instead of one-shot CLI")
+	limitFlag := flag.Int("limit", 0, "Limit number of outages to process (0 = process all)")
+	flag.Parse()
+
+	if *serverFlag || os.Getenv("RUN_MODE") == "server" {
+		runServer()
+		return
+	}
+
+	// Positional argument support: ./oms-automtion 22
+	if len(flag.Args()) > 0 {
+		if val, err := strconv.Atoi(flag.Args()[0]); err == nil {
+			*limitFlag = val
+		}
+	}
+
+	if _, err := RunAutomation(*limitFlag, os.Stdout); err != nil {
+		log.Fatalf("FATAL: %v", err)
+	}
 }

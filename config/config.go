@@ -1,26 +1,39 @@
 package config
 
-import "oms-automtion/models"
+import (
+	"os"
+
+	"oms-automtion/models"
+)
 
 const (
 	BaseURL  = "https://omsapi.geourja.com"
 	PageSize = 10
-	
+
 	// Rate limiting delays (in milliseconds)
-	DelayBetweenPages   = 1000  // 1 second between pagination requests
-	DelayBetweenOutages = 1000  // 1 seconds between processing each outage
+	DelayBetweenPages   = 1000 // 1 second between pagination requests
+	DelayBetweenOutages = 1000 // 1 seconds between processing each outage
 )
 
+// Creds holds OMS login credentials. Values are read from env vars at startup
+// with fallbacks to baked-in defaults for local development.
 var Creds = struct {
 	CompanyName string
 	EmpNo       string
 	Password    string
 	AppName     string
 }{
-	CompanyName: "DGVCL",
-	EmpNo:       "25894",
-	Password:    "Dgvcl@8949",
-	AppName:     "SFMS-Web",
+	CompanyName: envOr("OMS_COMPANY_NAME", "DGVCL"),
+	EmpNo:       envOr("OMS_EMP_NO", "25894"),
+	Password:    envOr("OMS_PASSWORD", "Dgvcl@8949"),
+	AppName:     envOr("OMS_APP_NAME", "SFMS-Web"),
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 var DurationRules = []models.DurationRule{
