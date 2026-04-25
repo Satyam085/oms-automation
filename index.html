@@ -4,145 +4,293 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>OMS Outage Automation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0f1115;
-    --panel: #181b22;
-    --border: #2a2f3a;
-    --text: #e6e9ef;
-    --muted: #8a93a6;
-    --accent: #4f8cff;
-    --ok: #34d399;
-    --fail: #f87171;
-    --skip: #fbbf24;
+    --bg: #fff5d6;          /* warm cream */
+    --paper: #ffffff;
+    --ink: #0a0a0a;
+    --line: #0a0a0a;
+    --shadow: #0a0a0a;
+    --pop-yellow: #ffe14d;
+    --pop-pink:   #ff8fb8;
+    --pop-lime:   #c4ff61;
+    --pop-blue:   #6aa9ff;
+    --pop-orange: #ff9447;
+    --muted: #555;
   }
   * { box-sizing: border-box; }
   html, body { -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; padding: 24px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: var(--bg); color: var(--text);
+    margin: 0; padding: 28px;
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    background-image:
+      radial-gradient(circle at 20% 18%, rgba(196,255,97,0.35) 0, transparent 38%),
+      radial-gradient(circle at 88% 86%, rgba(255,143,184,0.35) 0, transparent 42%);
+    color: var(--ink);
     min-height: 100vh;
+    font-weight: 500;
   }
   .wrap { max-width: 980px; margin: 0 auto; }
-  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+  header.top {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  h1 {
+    font-size: 36px; line-height: 1; margin: 0;
+    font-weight: 900; letter-spacing: -0.03em;
+    text-transform: uppercase;
+  }
+  .tag {
+    display: inline-block;
+    background: var(--pop-yellow);
+    border: 2.5px solid var(--ink);
+    padding: 4px 10px;
+    font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    box-shadow: 3px 3px 0 0 var(--shadow);
+  }
+  .sub {
+    color: var(--ink); font-size: 14px; margin: 8px 0 24px;
+    font-weight: 600;
+  }
+
   .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
-    margin-bottom: 16px;
+    background: var(--paper);
+    border: 3px solid var(--line);
+    border-radius: 0;
+    padding: 20px;
+    margin-bottom: 18px;
+    box-shadow: 7px 7px 0 0 var(--shadow);
   }
-  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
   .field { display: flex; flex-direction: column; gap: 6px; flex: 1 1 160px; min-width: 0; }
-  .field label { font-size: 12px; color: var(--muted); }
+  .field label {
+    font-size: 11px; color: var(--ink); font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
   .field input {
-    background: #0c0e13; color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px;
-    padding: 10px 12px; font-size: 16px; /* 16px prevents iOS auto-zoom */
-    font-family: inherit; width: 100%;
+    background: var(--paper); color: var(--ink);
+    border: 3px solid var(--line); border-radius: 0;
+    padding: 12px 14px; font-size: 16px;
+    font-family: 'Space Grotesk', inherit; font-weight: 700;
+    width: 100%;
+    box-shadow: 4px 4px 0 0 var(--shadow);
+    transition: background 0.1s, box-shadow 0.1s, transform 0.05s;
   }
-  .field input:focus { outline: none; border-color: var(--accent); }
+  .field input::placeholder { color: #9a9a9a; font-weight: 600; letter-spacing: 0.2em; }
+  .field input:focus {
+    outline: none;
+    background: var(--pop-yellow);
+    box-shadow: 6px 6px 0 0 var(--shadow);
+    transform: translate(-1px, -1px);
+  }
+  #passcode {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    letter-spacing: 0.6em; text-align: center;
+  }
+
   button {
-    background: var(--accent); color: #fff; border: 0;
-    padding: 11px 18px; border-radius: 6px; font-size: 15px;
-    cursor: pointer; font-weight: 500; min-height: 44px;
+    background: var(--pop-lime);
+    color: var(--ink);
+    border: 3px solid var(--line);
+    padding: 13px 22px; border-radius: 0;
+    font-size: 15px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    cursor: pointer;
+    box-shadow: 6px 6px 0 0 var(--shadow);
+    transition: transform 0.06s, box-shadow 0.06s;
+    font-family: inherit;
   }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button:hover:not(:disabled) { filter: brightness(1.1); }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  button:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+    box-shadow: 7px 7px 0 0 var(--shadow);
+  }
+  button:active:not(:disabled) {
+    transform: translate(4px, 4px);
+    box-shadow: 1px 1px 0 0 var(--shadow);
+  }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
   .stat {
-    background: #0c0e13; border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px; text-align: center;
+    border: 3px solid var(--line);
+    padding: 14px;
+    text-align: left;
+    box-shadow: 5px 5px 0 0 var(--shadow);
+    background: var(--paper);
   }
-  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
-  .stat .value { font-size: 26px; font-weight: 600; margin-top: 4px; }
-  .stat.ok .value { color: var(--ok); }
-  .stat.fail .value { color: var(--fail); }
-  .stat.skip .value { color: var(--skip); }
+  .stat.total { background: var(--pop-blue); }
+  .stat.ok    { background: var(--pop-lime); }
+  .stat.fail  { background: var(--pop-pink); }
+  .stat.skip  { background: var(--pop-yellow); }
+  .stat .label {
+    font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .stat .value {
+    font-size: 36px; font-weight: 900; margin-top: 6px;
+    font-variant-numeric: tabular-nums; line-height: 1;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
   .banner {
-    padding: 10px 14px; border-radius: 6px;
-    font-size: 14px; margin-bottom: 12px;
+    padding: 12px 16px; border: 3px solid var(--line); border-radius: 0;
+    font-size: 14px; font-weight: 700; margin-bottom: 16px;
     word-break: break-word;
+    box-shadow: 5px 5px 0 0 var(--shadow);
   }
-  .banner.ok { background: rgba(52, 211, 153, 0.12); border: 1px solid var(--ok); color: var(--ok); }
-  .banner.fail { background: rgba(248, 113, 113, 0.12); border: 1px solid var(--fail); color: var(--fail); }
-  .banner.info { background: rgba(79, 140, 255, 0.12); border: 1px solid var(--accent); color: var(--accent); }
+  .banner.ok   { background: var(--pop-lime); }
+  .banner.fail { background: var(--pop-pink); }
+  .banner.info { background: var(--pop-blue); }
+
+  .section-label {
+    font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 10px; display: inline-block;
+    background: var(--ink); color: var(--bg);
+    padding: 3px 8px;
+  }
+
   pre.logs {
-    background: #0c0e13; border: 1px solid var(--border);
-    border-radius: 8px; padding: 14px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 12px; line-height: 1.5;
-    white-space: pre; overflow-x: auto; max-height: 480px; overflow-y: auto;
-    margin: 0; color: #cbd2dd;
+    background: var(--ink); color: var(--pop-lime);
+    border: 3px solid var(--line);
+    padding: 16px;
+    font-family: 'JetBrains Mono', ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; line-height: 1.6;
+    white-space: pre; overflow-x: auto;
+    max-height: 480px; overflow-y: auto;
+    margin: 0;
     -webkit-overflow-scrolling: touch;
   }
-  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: -4px; padding: 4px; }
+
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 3px solid var(--line);
+    background: var(--paper);
+  }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  td.note { white-space: normal; min-width: 180px; color: var(--muted); }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
-  td.status { font-weight: 500; }
-  td.status.submitted { color: var(--ok); }
-  td.status.failed { color: var(--fail); }
-  td.status.skipped, td.status.parse_error { color: var(--skip); }
+  th, td {
+    text-align: left; padding: 11px 13px;
+    border-bottom: 2px solid var(--line);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td.note { white-space: normal; min-width: 180px; color: var(--muted); font-weight: 500; }
+  th {
+    background: var(--ink); color: var(--bg);
+    font-weight: 800; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  td { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  td.status {
+    font-weight: 800; text-transform: uppercase;
+    font-size: 11px; letter-spacing: 0.06em;
+  }
+  td.status span {
+    display: inline-block;
+    border: 2px solid var(--ink);
+    padding: 2px 8px;
+    box-shadow: 2px 2px 0 0 var(--ink);
+  }
+  td.status.submitted span { background: var(--pop-lime); }
+  td.status.failed span    { background: var(--pop-pink); }
+  td.status.skipped span,
+  td.status.parse_error span { background: var(--pop-yellow); }
+
   .hidden { display: none; }
   .spinner {
-    width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3);
-    border-top-color: #fff; border-radius: 50%;
-    display: inline-block; animation: spin 0.7s linear infinite;
+    width: 14px; height: 14px;
+    border: 2.5px solid var(--ink);
+    border-top-color: transparent;
+    border-radius: 50%;
+    display: inline-block;
+    animation: spin 0.7s linear infinite;
     vertical-align: middle; margin-right: 8px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  footer.foot {
+    margin-top: 32px;
+    text-align: center;
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--ink);
+  }
+  footer.foot .chip {
+    display: inline-block;
+    background: var(--paper);
+    border: 2.5px solid var(--ink);
+    padding: 6px 14px;
+    box-shadow: 3px 3px 0 0 var(--shadow);
+  }
+  footer.foot .heart { color: #e0245e; font-size: 13px; }
+
   /* Tablet & below */
   @media (max-width: 720px) {
-    body { padding: 16px; }
+    body { padding: 18px; }
     .wrap { max-width: 100%; }
-    .card { padding: 14px; border-radius: 8px; }
-    .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-    .stat { padding: 10px; }
-    .stat .value { font-size: 22px; }
-    h1 { font-size: 18px; }
+    .card { padding: 16px; box-shadow: 5px 5px 0 0 var(--shadow); }
+    .stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .stat { box-shadow: 4px 4px 0 0 var(--shadow); }
+    .stat .value { font-size: 28px; }
+    h1 { font-size: 26px; }
     pre.logs { font-size: 11px; padding: 12px; max-height: 360px; }
-    th, td { padding: 7px 8px; font-size: 12px; }
+    th, td { padding: 9px 10px; font-size: 12px; }
+    button { box-shadow: 5px 5px 0 0 var(--shadow); }
+    .field input { box-shadow: 3px 3px 0 0 var(--shadow); }
+    .banner { box-shadow: 4px 4px 0 0 var(--shadow); }
   }
 
   /* Phone */
   @media (max-width: 480px) {
-    body { padding: 12px; }
-    .row { gap: 10px; }
+    body { padding: 14px; }
+    .row { gap: 12px; }
     .field { flex-basis: 100%; }
     button { width: 100%; }
-    .sub { font-size: 12px; margin-bottom: 16px; }
+    .sub { font-size: 13px; margin-bottom: 16px; }
+    .card { box-shadow: 4px 4px 0 0 var(--shadow); padding: 14px; }
+    h1 { font-size: 22px; }
+    .stat .value { font-size: 24px; }
   }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>OMS Outage Automation</h1>
-  <div class="sub">Click run to fetch pending outages and submit reasons.</div>
+  <header class="top">
+    <h1>OMS Automation</h1>
+    <span class="tag">Outage Reasons · v1</span>
+  </header>
+  <div class="sub">Enter passcode → fetch pending outages → submit reasons.</div>
 
   <div class="card">
     <div class="row">
       <div class="field">
-        <label for="token">Auth Token</label>
-        <input id="token" type="password" placeholder="bearer token" autocomplete="off" />
+        <label for="passcode">Passcode</label>
+        <input id="passcode" type="password" inputmode="numeric" pattern="[0-9]{6}"
+               maxlength="6" placeholder="••••••" autocomplete="off" />
       </div>
       <div class="field">
         <label for="limit">Limit (0 = all)</label>
         <input id="limit" type="number" min="0" value="0" />
       </div>
-      <button id="runBtn">Run Automation</button>
+      <button id="runBtn">Run</button>
     </div>
   </div>
 
   <div id="banner" class="hidden"></div>
 
   <div id="statsCard" class="card hidden">
+    <span class="section-label">Summary</span>
     <div class="stats">
-      <div class="stat"><div class="label">Total</div><div class="value" id="stTotal">0</div></div>
+      <div class="stat total"><div class="label">Total</div><div class="value" id="stTotal">0</div></div>
       <div class="stat ok"><div class="label">Success</div><div class="value" id="stOk">0</div></div>
       <div class="stat fail"><div class="label">Failed</div><div class="value" id="stFail">0</div></div>
       <div class="stat skip"><div class="label">Skipped</div><div class="value" id="stSkip">0</div></div>
@@ -150,6 +298,7 @@
   </div>
 
   <div id="rowsCard" class="card hidden">
+    <span class="section-label">Outages</span>
     <div class="table-scroll">
       <table>
         <thead>
@@ -161,22 +310,27 @@
   </div>
 
   <div id="logsCard" class="card hidden">
-    <div style="color: var(--muted); font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px;">Run log</div>
+    <span class="section-label">Run log</span>
     <pre class="logs" id="logs"></pre>
   </div>
+
+  <footer class="foot">
+    <span class="chip">Made by <span class="heart">★</span> Satyam</span>
+  </footer>
 </div>
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const tokenInput = $('token');
+  const passcodeInput = $('passcode');
   const limitInput = $('limit');
   const runBtn = $('runBtn');
   const banner = $('banner');
 
-  // Persist token in localStorage so user doesn't retype it.
-  tokenInput.value = localStorage.getItem('oms_token') || '';
-  tokenInput.addEventListener('change', () => {
-    localStorage.setItem('oms_token', tokenInput.value);
+  // Passcode is required on every page load — never persisted.
+  passcodeInput.value = '';
+  // Strip non-digits as the user types so paste/keyboard glitches stay clean.
+  passcodeInput.addEventListener('input', () => {
+    passcodeInput.value = passcodeInput.value.replace(/\D/g, '').slice(0, 6);
   });
 
   function showBanner(kind, msg) {
@@ -193,6 +347,12 @@
     $('statsCard').classList.remove('hidden');
   }
 
+  function escapeHTML(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
   function renderRows(rows) {
     const body = $('rowsBody');
     body.innerHTML = '';
@@ -203,13 +363,13 @@
     for (const r of rows) {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td>${r.outage_id ?? ''}</td>
+        <td>${escapeHTML(r.outage_id)}</td>
         <td>${(r.hours ?? 0).toFixed(2)}</td>
-        <td>${r.bucket ?? ''}</td>
-        <td>${r.feeder ?? ''}</td>
-        <td>${r.reason_id ?? ''}</td>
-        <td class="status ${r.status}">${r.status}</td>
-        <td class="note">${r.note ?? ''}</td>
+        <td>${escapeHTML(r.bucket)}</td>
+        <td>${escapeHTML(r.feeder)}</td>
+        <td>${escapeHTML(r.reason_id)}</td>
+        <td class="status ${escapeHTML(r.status)}"><span>${escapeHTML(r.status)}</span></td>
+        <td class="note">${escapeHTML(r.note)}</td>
       `;
       body.appendChild(tr);
     }
@@ -217,9 +377,12 @@
   }
 
   async function run() {
-    const token = tokenInput.value.trim();
-    if (!token) { showBanner('fail', 'Auth token is required'); return; }
-    localStorage.setItem('oms_token', token);
+    const passcode = passcodeInput.value.trim();
+    if (!/^[0-9]{6}$/.test(passcode)) {
+      showBanner('fail', 'Passcode must be 6 digits');
+      passcodeInput.focus();
+      return;
+    }
 
     const limit = parseInt(limitInput.value, 10) || 0;
 
@@ -233,10 +396,15 @@
     try {
       const res = await fetch(`/run?limit=${limit}`, {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token }
+        headers: { 'X-Passcode': passcode }
       });
-      if (res.status === 401) { showBanner('fail', 'Unauthorized — check your token.'); return; }
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ ok: false, error: 'invalid response' }));
+      if (res.status === 401) {
+        showBanner('fail', data.error || 'Wrong passcode');
+        passcodeInput.value = '';
+        passcodeInput.focus();
+        return;
+      }
 
       if (data.logs) {
         $('logs').textContent = data.logs;
@@ -255,11 +423,14 @@
       showBanner('fail', 'Request error: ' + e.message);
     } finally {
       runBtn.disabled = false;
-      runBtn.textContent = 'Run Automation';
+      runBtn.textContent = 'Run';
+      passcodeInput.value = '';
     }
   }
 
   runBtn.addEventListener('click', run);
+  passcodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+  limitInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
 </script>
 </body>
 </html>

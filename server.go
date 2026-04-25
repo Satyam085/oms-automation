@@ -5,11 +5,11 @@ import (
 	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -21,10 +21,46 @@ var indexHTML []byte
 // one job at a time.
 var runMu sync.Mutex
 
+// passcodeGuard tracks failed passcode attempts and triggers a lockout
+// after too many wrong tries, so a 6-digit code can't be brute-forced.
+type passcodeGuard struct {
+	mu          sync.Mutex
+	expected    string
+	fails       int
+	lockedUntil time.Time
+}
+
+const (
+	maxPasscodeFails = 10
+	lockoutDuration  = 15 * time.Minute
+)
+
+func (g *passcodeGuard) check(provided string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if remaining := time.Until(g.lockedUntil); remaining > 0 {
+		return fmt.Errorf("too many wrong attempts; locked for %s", remaining.Round(time.Second))
+	}
+
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(g.expected)) == 1 {
+		g.fails = 0
+		return nil
+	}
+
+	g.fails++
+	if g.fails >= maxPasscodeFails {
+		g.lockedUntil = time.Now().Add(lockoutDuration)
+		g.fails = 0
+		return fmt.Errorf("too many wrong attempts; locked for %s", lockoutDuration)
+	}
+	return fmt.Errorf("incorrect passcode (%d/%d before lockout)", g.fails, maxPasscodeFails)
+}
+
 type runResponse struct {
 	OK     bool       `json:"ok"`
 	Error  string     `json:"error,omitempty"`
-	Logs   string     `json:"logs"`
+	Logs   string     `json:"logs,omitempty"`
 	Result *RunResult `json:"result,omitempty"`
 }
 
@@ -34,15 +70,16 @@ func runServer() {
 		port = "8080"
 	}
 
-	token := os.Getenv("AUTH_TOKEN")
-	if token == "" {
-		log.Fatal("AUTH_TOKEN env var is required in server mode")
+	passcode := os.Getenv("PASSCODE")
+	if !isSixDigits(passcode) {
+		log.Fatal("PASSCODE env var is required and must be exactly 6 numeric digits")
 	}
+	guard := &passcodeGuard{expected: passcode}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/health", handleHealth)
-	mux.HandleFunc("/run", requireAuth(token, handleRun))
+	mux.HandleFunc("/run", makeRunHandler(guard))
 
 	addr := ":" + port
 	log.Printf("OMS automation server listening on %s", addr)
@@ -51,14 +88,25 @@ func runServer() {
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		// /run can take minutes (rate-limited loop). Generous timeouts.
-		ReadTimeout:  5 * time.Minute,
-		WriteTimeout: 30 * time.Minute,
-		IdleTimeout:  2 * time.Minute,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      30 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+func isSixDigits(s string) bool {
+	if len(s) != 6 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -75,52 +123,51 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
-func requireAuth(token string, next http.HandlerFunc) http.HandlerFunc {
-	expected := []byte(token)
+func makeRunHandler(guard *passcodeGuard) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(got), expected) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		next(w, r)
-	}
-}
 
-func handleRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	limit := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			limit = n
+		provided := r.Header.Get("X-Passcode")
+		if err := guard.check(provided); err != nil {
+			writeJSON(w, http.StatusUnauthorized, runResponse{
+				OK:    false,
+				Error: err.Error(),
+			})
+			return
 		}
-	}
 
-	if !runMu.TryLock() {
-		writeJSON(w, http.StatusConflict, runResponse{
-			OK:    false,
-			Error: "another run is already in progress",
-		})
-		return
-	}
-	defer runMu.Unlock()
+		limit := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				limit = n
+			}
+		}
 
-	var buf bytes.Buffer
-	result, err := RunAutomation(limit, &buf)
+		if !runMu.TryLock() {
+			writeJSON(w, http.StatusConflict, runResponse{
+				OK:    false,
+				Error: "another run is already in progress",
+			})
+			return
+		}
+		defer runMu.Unlock()
 
-	resp := runResponse{
-		OK:     err == nil,
-		Logs:   buf.String(),
-		Result: result,
+		var buf bytes.Buffer
+		result, err := RunAutomation(limit, &buf)
+
+		resp := runResponse{
+			OK:     err == nil,
+			Logs:   buf.String(),
+			Result: result,
+		}
+		if err != nil {
+			resp.Error = err.Error()
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
-	if err != nil {
-		resp.Error = err.Error()
-	}
-	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
