@@ -199,18 +199,30 @@ func RunAutomation(limit int, out io.Writer) (*RunResult, error) {
 			i+1, len(toProcess), id, p.DurationHours, p.Rule.ReasonID)
 
 		locIDs, err := client.FetchLocIDs(id, p.Outage.FeederID)
-		if err != nil {
+		if err == oms.ErrNoGeoLocation {
+			lg.Printf("    → No geo location found. Submitting general maintenance reason...")
+			if err := client.SubmitNoGeoReason(id); err != nil {
+				lg.Printf("    ✗ Submit failed: %v", err)
+				row.Status = "failed"
+				row.Note = "submit no_geo: " + err.Error()
+				result.Rows = append(result.Rows, row)
+				result.Failed++
+				continue
+			}
+			lg.Printf("    ✓ Submitted (General Maintenance)")
+			row.Status = "submitted"
+			row.Note = "no geo location (General Maintenance)"
+			row.ReasonID = 44
+			result.Rows = append(result.Rows, row)
+			result.Success++
+
+			lg.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
+			time.Sleep(time.Duration(config.DelayBetweenOutages) * time.Millisecond)
+			continue
+		} else if err != nil {
 			lg.Printf("    ✗ loc_ids fetch failed: %v", err)
 			row.Status = "failed"
 			row.Note = "loc_ids fetch: " + err.Error()
-			result.Rows = append(result.Rows, row)
-			result.Failed++
-			continue
-		}
-		if len(locIDs) == 0 {
-			lg.Printf("    ✗ No loc_ids in GeoJSON")
-			row.Status = "failed"
-			row.Note = "no loc_ids in GeoJSON"
 			result.Rows = append(result.Rows, row)
 			result.Failed++
 			continue

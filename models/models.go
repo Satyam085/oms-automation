@@ -97,6 +97,11 @@ type ReasonPayloadItem struct {
 	ReasonID int `json:"reason_id"`
 }
 
+type NoGeoReasonPayloadItem struct {
+	ReasonID   string `json:"reason_id"`
+	ReasonName string `json:"reason_name"`
+}
+
 // ─── LOGIN ───
 
 type LoginRequest struct {

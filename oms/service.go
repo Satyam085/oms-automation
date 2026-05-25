@@ -2,14 +2,18 @@ package oms
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"oms-automtion/config"
 	"oms-automtion/models"
 )
+
+var ErrNoGeoLocation = errors.New("no geo location found")
 
 // FetchPendingOutages fetches all pending outages using pagination.
 // If limit > 0, it stops fetching once the limit is reached.
@@ -100,6 +104,10 @@ func (c *Client) FetchLocIDs(outageID string, feederID int) ([]int, error) {
 		return nil, fmt.Errorf("detail %s returned %d: %s", outageID, resp.StatusCode, respBody)
 	}
 
+	if strings.Contains(string(respBody), "no_geo_location") {
+		return nil, ErrNoGeoLocation
+	}
+
 	var detail models.ReasonDetailResponse
 	if err := json.Unmarshal(respBody, &detail); err != nil {
 		return nil, fmt.Errorf("unmarshal detail %s: %w", outageID, err)
@@ -127,6 +135,10 @@ func (c *Client) FetchLocIDs(outageID string, feederID int) ([]int, error) {
 			}
 		}
 	}
+
+	if len(locIDs) == 0 {
+		return nil, ErrNoGeoLocation
+	}
 	return locIDs, nil
 }
 
@@ -151,6 +163,34 @@ func (c *Client) SubmitReason(outageID string, locID int, reasonID int) error {
 
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("submit %s returned %d: %s", outageID, resp.StatusCode, respBody)
+	}
+	return nil
+}
+
+// SubmitNoGeoReason posts the default general maintenance reason when no geo location is available.
+func (c *Client) SubmitNoGeoReason(outageID string) error {
+	url := fmt.Sprintf("%s/reason/outage/%s", config.BaseURL, outageID)
+
+	payload := []models.NoGeoReasonPayloadItem{{
+		ReasonID:   "44",
+		ReasonName: "General Maintenance",
+	}}
+	body, _ := json.Marshal(payload)
+
+	req, err := c.NewAPIRequest("POST", url, body)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("submit no_geo %s: %w", outageID, err)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("submit no_geo %s returned %d: %s", outageID, resp.StatusCode, respBody)
 	}
 	return nil
 }
