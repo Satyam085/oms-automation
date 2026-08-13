@@ -13,12 +13,20 @@ import (
 )
 
 type Client struct {
+	Profile    models.UserProfile
 	Token      string
 	HTTPClient *http.Client
 }
 
-func NewClient() *Client {
+func NewClient(profile models.UserProfile) *Client {
+	if profile.EmpNo == "" {
+		profile.CompanyName = config.Creds.CompanyName
+		profile.EmpNo = config.Creds.EmpNo
+		profile.Password = config.Creds.Password
+		profile.AppName = config.Creds.AppName
+	}
 	return &Client{
+		Profile:    profile,
 		HTTPClient: http.DefaultClient,
 	}
 }
@@ -26,10 +34,10 @@ func NewClient() *Client {
 // Login authenticates and sets the client's Token fields.
 func (c *Client) Login() error {
 	payload := models.LoginRequest{
-		CompanyName: config.Creds.CompanyName,
-		EmpNo:       config.Creds.EmpNo,
-		Password:    config.Creds.Password,
-		AppName:     config.Creds.AppName,
+		CompanyName: c.Profile.CompanyName,
+		EmpNo:       c.Profile.EmpNo,
+		Password:    c.Profile.Password,
+		AppName:     c.Profile.AppName,
 	}
 
 	body, err := json.Marshal(payload)
@@ -56,11 +64,6 @@ func (c *Client) Login() error {
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 
-	// DEBUG — remove after fixing
-	// log.Printf("  [DEBUG] Login request body: %s", string(body))
-	// log.Printf("  [DEBUG] Login status code: %d", resp.StatusCode)
-	// log.Printf("  [DEBUG] Login raw response: %s", string(respBody))
-
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("login returned %d: %s", resp.StatusCode, string(respBody))
 	}
@@ -76,7 +79,7 @@ func (c *Client) Login() error {
 
 	c.Token = loginResp.User.AuthToken
 	log.Printf("  ✓ Logged in as empNo=%s | token=%s...%s",
-		config.Creds.EmpNo, c.Token[:10], c.Token[len(c.Token)-8:])
+		c.Profile.EmpNo, c.Token[:10], c.Token[len(c.Token)-8:])
 	return nil
 }
 

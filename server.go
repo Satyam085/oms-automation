@@ -10,8 +10,12 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"oms-automtion/config"
+	"oms-automtion/models"
 )
 
 //go:embed index.html
@@ -21,11 +25,11 @@ var indexHTML []byte
 // one job at a time.
 var runMu sync.Mutex
 
-// passcodeGuard tracks failed passcode attempts and triggers a lockout
-// after too many wrong tries, so a 6-digit code can't be brute-forced.
-type passcodeGuard struct {
+// profileGuard tracks failed passcode attempts across configured profiles
+// and triggers a lockout after too many wrong tries.
+type profileGuard struct {
 	mu          sync.Mutex
-	expected    string
+	profiles    []models.UserProfile
 	fails       int
 	lockedUntil time.Time
 }
@@ -35,26 +39,29 @@ const (
 	lockoutDuration  = 15 * time.Minute
 )
 
-func (g *passcodeGuard) check(provided string) error {
+func (g *profileGuard) authenticate(provided string) (*models.UserProfile, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	if remaining := time.Until(g.lockedUntil); remaining > 0 {
-		return fmt.Errorf("too many wrong attempts; locked for %s", remaining.Round(time.Second))
+		return nil, fmt.Errorf("too many wrong attempts; locked for %s", remaining.Round(time.Second))
 	}
 
-	if subtle.ConstantTimeCompare([]byte(provided), []byte(g.expected)) == 1 {
-		g.fails = 0
-		return nil
+	for i := range g.profiles {
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(g.profiles[i].Passcode)) == 1 {
+			g.fails = 0
+			p := g.profiles[i]
+			return &p, nil
+		}
 	}
 
 	g.fails++
 	if g.fails >= maxPasscodeFails {
 		g.lockedUntil = time.Now().Add(lockoutDuration)
 		g.fails = 0
-		return fmt.Errorf("too many wrong attempts; locked for %s", lockoutDuration)
+		return nil, fmt.Errorf("too many wrong attempts; locked for %s", lockoutDuration)
 	}
-	return fmt.Errorf("incorrect passcode (%d/%d before lockout)", g.fails, maxPasscodeFails)
+	return nil, fmt.Errorf("incorrect passcode (%d/%d before lockout)", g.fails, maxPasscodeFails)
 }
 
 type runResponse struct {
@@ -70,11 +77,19 @@ func runServer() {
 		port = "8080"
 	}
 
-	passcode := os.Getenv("PASSCODE")
-	if !isSixDigits(passcode) {
-		log.Fatal("PASSCODE env var is required and must be exactly 6 numeric digits")
+	profiles := config.LoadProfiles()
+	if len(profiles) == 0 {
+		log.Fatal("No user profiles configured. Please set PASSCODE and OMS credentials in environment variables.")
 	}
-	guard := &passcodeGuard{expected: passcode}
+
+	for i, p := range profiles {
+		if !isSixDigits(p.Passcode) {
+			log.Fatalf("Profile %d (EmpNo %s) passcode must be exactly 6 numeric digits (got %q)", i+1, p.EmpNo, p.Passcode)
+		}
+		log.Printf("Loaded user profile %d: EmpNo=%s, Company=%s", i+1, p.EmpNo, p.CompanyName)
+	}
+
+	guard := &profileGuard{profiles: profiles}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
@@ -82,7 +97,7 @@ func runServer() {
 	mux.HandleFunc("/run", makeRunHandler(guard))
 
 	addr := ":" + port
-	log.Printf("OMS automation server listening on %s", addr)
+	log.Printf("OMS automation server listening on %s with %d user profile(s)", addr, len(profiles))
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -123,7 +138,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
-func makeRunHandler(guard *passcodeGuard) http.HandlerFunc {
+func makeRunHandler(guard *profileGuard) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -131,7 +146,8 @@ func makeRunHandler(guard *passcodeGuard) http.HandlerFunc {
 		}
 
 		provided := r.Header.Get("X-Passcode")
-		if err := guard.check(provided); err != nil {
+		profile, err := guard.authenticate(provided)
+		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, runResponse{
 				OK:    false,
 				Error: err.Error(),
@@ -146,6 +162,18 @@ func makeRunHandler(guard *passcodeGuard) http.HandlerFunc {
 			}
 		}
 
+		rulesParam := r.URL.Query().Get("rules")
+		var enabledReasonIDs map[int]bool
+		if rulesParam != "" {
+			enabledReasonIDs = make(map[int]bool)
+			for _, part := range strings.Split(rulesParam, ",") {
+				part = strings.TrimSpace(part)
+				if id, err := strconv.Atoi(part); err == nil {
+					enabledReasonIDs[id] = true
+				}
+			}
+		}
+
 		if !runMu.TryLock() {
 			writeJSON(w, http.StatusConflict, runResponse{
 				OK:    false,
@@ -156,7 +184,7 @@ func makeRunHandler(guard *passcodeGuard) http.HandlerFunc {
 		defer runMu.Unlock()
 
 		var buf bytes.Buffer
-		result, err := RunAutomation(limit, &buf)
+		result, err := RunAutomation(*profile, limit, enabledReasonIDs, &buf)
 
 		resp := runResponse{
 			OK:     err == nil,

@@ -117,6 +117,39 @@
   }
   button:disabled { opacity: 0.55; cursor: not-allowed; }
 
+  .rule-toggles {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px;
+  }
+  .toggle-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #f4f4f4; color: var(--ink);
+    border: 2.5px solid var(--line);
+    padding: 6px 12px;
+    font-size: 12px; font-weight: 800;
+    cursor: pointer;
+    user-select: none;
+    box-shadow: 3px 3px 0 0 var(--shadow);
+    transition: background 0.1s, transform 0.05s, box-shadow 0.05s;
+  }
+  .toggle-chip:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 0 var(--shadow);
+  }
+  .toggle-chip input[type="checkbox"] {
+    accent-color: var(--ink);
+    width: 15px; height: 15px;
+    cursor: pointer;
+  }
+  .toggle-chip.checked {
+    background: var(--pop-yellow);
+  }
+  .rule-reason {
+    font-size: 11px;
+    opacity: 0.8;
+    margin-left: 4px;
+    font-weight: 700;
+  }
+
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
   .stat {
     border: 3px solid var(--line);
@@ -283,12 +316,42 @@
       </div>
       <button id="runBtn">Run</button>
     </div>
+    <div class="row" style="margin-top: 16px;">
+      <div class="field" style="flex-basis: 100%;">
+        <label>Active Duration Intervals</label>
+        <div class="rule-toggles">
+          <label class="toggle-chip checked">
+            <input type="checkbox" value="21" checked />
+            <span>≤ 15 min <span class="rule-reason">(#21 Jumper Touching)</span></span>
+          </label>
+          <label class="toggle-chip checked">
+            <input type="checkbox" value="20" checked />
+            <span>15 min–1 hr <span class="rule-reason">(#20 Jumper Burnt)</span></span>
+          </label>
+          <label class="toggle-chip checked">
+            <input type="checkbox" value="31" checked />
+            <span>1–3 hours <span class="rule-reason">(#31 Tree / Branch Falling)</span></span>
+          </label>
+          <label class="toggle-chip checked">
+            <input type="checkbox" value="74" checked />
+            <span>3–8 hours <span class="rule-reason">(#74 Conductor Snapped)</span></span>
+          </label>
+          <label class="toggle-chip checked">
+            <input type="checkbox" value="28" checked />
+            <span>~15.73 hours <span class="rule-reason">(#28 Relay Problems)</span></span>
+          </label>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="banner" class="hidden"></div>
 
   <div id="statsCard" class="card hidden">
-    <span class="section-label">Summary</span>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span class="section-label">Summary</span>
+      <span id="stUserTag" class="tag hidden" style="background: var(--pop-pink);"></span>
+    </div>
     <div class="stats">
       <div class="stat total"><div class="label">Total</div><div class="value" id="stTotal">0</div></div>
       <div class="stat ok"><div class="label">Success</div><div class="value" id="stOk">0</div></div>
@@ -340,6 +403,12 @@
   }
 
   function setStats(r) {
+    if (r.emp_no) {
+      $('stUserTag').textContent = 'USER: ' + r.emp_no;
+      $('stUserTag').classList.remove('hidden');
+    } else {
+      $('stUserTag').classList.add('hidden');
+    }
     $('stTotal').textContent = r.total ?? 0;
     $('stOk').textContent = r.success ?? 0;
     $('stFail').textContent = r.failed ?? 0;
@@ -362,12 +431,15 @@
     }
     for (const r of rows) {
       const tr = document.createElement('tr');
+      const reasonDisplay = r.reason_name
+        ? `#${r.reason_id} — ${escapeHTML(r.reason_name)}`
+        : `#${r.reason_id}`;
       tr.innerHTML = `
         <td>${escapeHTML(r.outage_id)}</td>
         <td>${(r.hours ?? 0).toFixed(2)}</td>
         <td>${escapeHTML(r.bucket)}</td>
         <td>${escapeHTML(r.feeder)}</td>
-        <td>${escapeHTML(r.reason_id)}</td>
+        <td>${reasonDisplay}</td>
         <td class="status ${escapeHTML(r.status)}"><span>${escapeHTML(r.status)}</span></td>
         <td class="note">${escapeHTML(r.note)}</td>
       `;
@@ -376,11 +448,33 @@
     $('rowsCard').classList.remove('hidden');
   }
 
+  document.querySelectorAll('.rule-toggles input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const chip = e.target.closest('.toggle-chip');
+      if (e.target.checked) {
+        chip.classList.add('checked');
+      } else {
+        chip.classList.remove('checked');
+      }
+    });
+  });
+
+  function getSelectedRules() {
+    const checked = Array.from(document.querySelectorAll('.rule-toggles input[type="checkbox"]:checked'));
+    return checked.map(cb => cb.value).join(',');
+  }
+
   async function run() {
     const passcode = passcodeInput.value.trim();
     if (!/^[0-9]{6}$/.test(passcode)) {
       showBanner('fail', 'Passcode must be 6 digits');
       passcodeInput.focus();
+      return;
+    }
+
+    const selectedRules = getSelectedRules();
+    if (!selectedRules) {
+      showBanner('fail', 'Please select at least one duration interval to clear.');
       return;
     }
 
@@ -394,7 +488,7 @@
     $('logsCard').classList.add('hidden');
 
     try {
-      const res = await fetch(`/run?limit=${limit}`, {
+      const res = await fetch(`/run?limit=${limit}&rules=${encodeURIComponent(selectedRules)}`, {
         method: 'POST',
         headers: { 'X-Passcode': passcode }
       });
@@ -415,7 +509,8 @@
         renderRows(data.result.rows);
       }
       if (data.ok) {
-        showBanner('ok', `Run complete — ${data.result?.success ?? 0} submitted, ${data.result?.failed ?? 0} failed, ${data.result?.skipped ?? 0} skipped.`);
+        const empStr = data.result?.emp_no ? ` for user ${data.result.emp_no}` : '';
+        showBanner('ok', `Run complete${empStr} — ${data.result?.success ?? 0} submitted, ${data.result?.failed ?? 0} failed, ${data.result?.skipped ?? 0} skipped.`);
       } else {
         showBanner('fail', 'Run failed: ' + (data.error || 'unknown error'));
       }

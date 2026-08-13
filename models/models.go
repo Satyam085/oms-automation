@@ -2,11 +2,12 @@ package models
 
 import "encoding/json"
 
-// DurationRule defines the mapping from duration to a specific ReasonID.
+// DurationRule defines the mapping from duration to a specific ReasonID and ReasonName.
 type DurationRule struct {
-	Label    string
-	MaxHours float64
-	ReasonID int
+	Label      string  `json:"label"`
+	MaxHours   float64 `json:"max_hours"`
+	ReasonID   int     `json:"reason_id"`
+	ReasonName string  `json:"reason_name,omitempty"`
 }
 
 // ─── PENDING OUTAGES ───
@@ -102,7 +103,16 @@ type NoGeoReasonPayloadItem struct {
 	ReasonName string `json:"reason_name"`
 }
 
-// ─── LOGIN ───
+// ─── LOGIN & PROFILES ───
+
+type UserProfile struct {
+	Name        string `json:"name,omitempty"`
+	Passcode    string `json:"passcode"`
+	CompanyName string `json:"company_name"`
+	EmpNo       string `json:"emp_no"`
+	Password    string `json:"password"`
+	AppName     string `json:"app_name"`
+}
 
 type LoginRequest struct {
 	CompanyName string `json:"companyName"`
