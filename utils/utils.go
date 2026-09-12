@@ -25,8 +25,10 @@ func CalculateDurationFromTimestamps(occurDate, occurTime, restoreDate, restoreT
 	occurTimeClean := strings.Split(occurTime, ".")[0]
 	occurStr := occurDate + " " + occurTimeClean
 
+	// Parse in time.Local (forced to IST in main) so the time.Now() fallback
+	// below compares against the same frame.
 	const layout = "2006-01-02 15:04:05"
-	occurParsed, err := time.Parse(layout, occurStr)
+	occurParsed, err := time.ParseInLocation(layout, occurStr, time.Local)
 	if err != nil {
 		return 0, fmt.Errorf("parse occur %q: %w", occurStr, err)
 	}
@@ -37,7 +39,7 @@ func CalculateDurationFromTimestamps(occurDate, occurTime, restoreDate, restoreT
 	} else {
 		restoreTimeClean := strings.Split(restoreTime, ".")[0]
 		restoreStr := restoreDate + " " + restoreTimeClean
-		restoreParsed, err = time.Parse(layout, restoreStr)
+		restoreParsed, err = time.ParseInLocation(layout, restoreStr, time.Local)
 		if err != nil {
 			return 0, fmt.Errorf("parse restore %q: %w", restoreStr, err)
 		}
@@ -103,10 +105,8 @@ func ClassifyRule(hours float64, rules []models.DurationRule) models.DurationRul
 		}
 	}
 
-	// Return last rule if nothing matched
-	if len(rules) > 0 {
-		return rules[len(rules)-1]
-	}
-
+	// Nothing matched: the last rule is a narrow window, not an upper bound, so
+	// falling back to it would mis-assign. Callers (see ruleFor) handle the
+	// over-range case themselves.
 	return models.DurationRule{}
 }

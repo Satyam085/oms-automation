@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"oms-automtion/config"
 	"oms-automtion/models"
@@ -16,9 +17,15 @@ type Client struct {
 	Profile    models.UserProfile
 	Token      string
 	HTTPClient *http.Client
+	Log        *log.Logger
 }
 
-func NewClient(profile models.UserProfile) *Client {
+// NewClient builds a client for one profile. lg receives progress lines (pass the
+// run's logger so they reach the web UI); nil falls back to the default logger.
+func NewClient(profile models.UserProfile, lg *log.Logger) *Client {
+	if lg == nil {
+		lg = log.Default()
+	}
 	if profile.EmpNo == "" {
 		profile.CompanyName = config.Creds.CompanyName
 		profile.EmpNo = config.Creds.EmpNo
@@ -27,7 +34,8 @@ func NewClient(profile models.UserProfile) *Client {
 	}
 	return &Client{
 		Profile:    profile,
-		HTTPClient: http.DefaultClient,
+		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		Log:        lg,
 	}
 }
 
@@ -78,8 +86,7 @@ func (c *Client) Login() error {
 	}
 
 	c.Token = loginResp.User.AuthToken
-	log.Printf("  ✓ Logged in as empNo=%s | token=%s...%s",
-		c.Profile.EmpNo, c.Token[:10], c.Token[len(c.Token)-8:])
+	c.Log.Printf("  ✓ Logged in as empNo=%s", c.Profile.EmpNo)
 	return nil
 }
 

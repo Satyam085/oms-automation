@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"strings"
 	"time"
 
@@ -63,10 +62,10 @@ func (c *Client) FetchPendingOutages(limit int) ([]models.Outage, error) {
 		}
 
 		all = append(all, pr.Data...)
-		log.Printf("  [Fetch] offset=%d got=%d total=%d", offset, len(pr.Data), pr.TotalRecords)
+		c.Log.Printf("  [Fetch] offset=%d got=%d total=%d", offset, len(pr.Data), pr.TotalRecords)
 
 		// Re-enabled pagination logic
-		if(limit > 0 && len(all) >= limit) || offset+config.PageSize >= pr.TotalRecords || len(pr.Data) == 0 {
+		if (limit > 0 && len(all) >= limit) || offset+config.PageSize >= pr.TotalRecords || len(pr.Data) == 0 {
 			break
 		}
 		offset += config.PageSize
@@ -74,19 +73,18 @@ func (c *Client) FetchPendingOutages(limit int) ([]models.Outage, error) {
 		// Rate limiting: delay between pagination requests
 		time.Sleep(time.Duration(config.DelayBetweenPages) * time.Millisecond)
 	}
-	
+
 	// Trim to exact limit if we over-fetched
 	if limit > 0 && len(all) > limit {
 		all = all[:limit]
 	}
-	
+
 	return all, nil
 }
 
 // FetchLocIDs extracts loc_ids from the GeoJSON response for a specific outage.
 func (c *Client) FetchLocIDs(outageID string, feederID int) ([]int, error) {
 	url := fmt.Sprintf("%s/reason/%d/%s", config.BaseURL, feederID, outageID)
-	
 
 	req, err := c.NewAPIRequest("GET", url, nil)
 	if err != nil {
@@ -124,7 +122,7 @@ func (c *Client) FetchLocIDs(outageID string, feederID int) ([]int, error) {
 			// Skip non-array elements (like the metadata object)
 			continue
 		}
-		
+
 		// Extract pole IDs from this array
 		for _, wrapper := range wrappers {
 			for _, feat := range wrapper.RowToJSON.Features {

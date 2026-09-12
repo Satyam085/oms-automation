@@ -171,7 +171,7 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 		lg.Printf("⚙ Limit: Processing max %d outages", limit)
 	}
 
-	client := oms.NewClient(profile)
+	client := oms.NewClient(profile, lg)
 
 	lg.Println("[Step 0] Logging in...")
 	if err := client.Login(); err != nil {
@@ -192,6 +192,7 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 	}
 
 	var processed []processedOutage
+	parseErrors := 0
 	for _, o := range outages {
 		hours, err := utils.CalculateDurationFromTimestamps(
 			o.OutageOccurDate, o.OutageOccurTime,
@@ -205,6 +206,7 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 				Status:   "parse_error",
 				Note:     err.Error(),
 			})
+			parseErrors++
 			continue
 		}
 
@@ -236,7 +238,10 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 		lg.Printf("⚙ Limiting to first %d outages (out of %d total)", limit, len(processed))
 	}
 
-	result.Total = len(toProcess)
+	// Parse errors are outages that did not get cleared, so they count as failures
+	// and toward the total — otherwise the UI stat tiles don't sum to the row count.
+	result.Total = len(toProcess) + parseErrors
+	result.Failed = parseErrors
 	lg.Printf("[Step 2 & 3] Processing %d outages...", len(toProcess))
 
 	for i, p := range toProcess {
@@ -340,7 +345,6 @@ func main() {
 		log.Fatal("❌ Failed to load IST timezone:", err)
 	}
 	time.Local = ist
-	rand.Seed(time.Now().UnixNano())
 
 	serverFlag := flag.Bool("server", false, "Run as HTTP server instead of one-shot CLI")
 	limitFlag := flag.Int("limit", 0, "Limit number of outages to process (0 = process all)")
