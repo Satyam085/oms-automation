@@ -118,6 +118,23 @@ var reasonNameMap = map[int]string{
 	113: "Heavy Wind",
 }
 
+// ruleFor picks the duration rule for an outage. Anything over 8 hours has no real
+// bucket (the 15.73 rule is an exact-ish window, not an upper bound) and gets
+// #25 No Cause found instead of being skipped.
+func ruleFor(hours float64, feederName string) models.DurationRule {
+	noCause := models.DurationRule{Label: "> 8 hours", MaxHours: 0, ReasonID: 25, ReasonName: "No Cause found"}
+
+	// Special rule: KUMBHIYA feeder with duration > 6 hours → reason 25
+	if feederName == "KUMBHIYA" && hours > 6 {
+		noCause.Label = "KUMBHIYA >6h"
+		return noCause
+	}
+	if hours > 8 && !(hours >= 15.72 && hours <= 15.74) {
+		return noCause
+	}
+	return utils.ClassifyRule(hours, config.DurationRules)
+}
+
 func getReasonName(reasonID int, ruleName string) string {
 	if ruleName != "" {
 		return ruleName
@@ -191,12 +208,7 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 			continue
 		}
 
-		rule := utils.ClassifyRule(hours, config.DurationRules)
-
-		// Special rule: KUMBHIYA feeder with duration > 6 hours → reason 25
-		if o.FeederName == "KUMBHIYA" && hours > 6 {
-			rule = models.DurationRule{Label: "KUMBHIYA >6h", MaxHours: 0, ReasonID: 25}
-		}
+		rule := ruleFor(hours, o.FeederName)
 
 		processed = append(processed, processedOutage{
 			Outage:        o,
@@ -237,18 +249,6 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 			Feeder:     p.Outage.FeederName,
 			ReasonID:   p.Rule.ReasonID,
 			ReasonName: rName,
-		}
-
-		isOverride := p.Rule.MaxHours == 0 && p.Rule.ReasonID != 0
-		is1573 := p.DurationHours >= 15.72 && p.DurationHours <= 15.74
-		if p.DurationHours > 8 && !is1573 && !isOverride {
-			lg.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (no matching rule)",
-				i+1, len(toProcess), id, p.DurationHours)
-			row.Status = "skipped"
-			row.Note = "no matching rule"
-			result.Rows = append(result.Rows, row)
-			result.Skipped++
-			continue
 		}
 
 		if enabledReasonIDs != nil && !enabledReasonIDs[p.Rule.ReasonID] {
