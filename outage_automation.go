@@ -157,6 +157,19 @@ type RunResult struct {
 	DurationMs int64          `json:"duration_ms"`
 }
 
+// freshOutages returns the outages not already seen, marking them seen. A refetch
+// re-serves anything we could not clear, and reprocessing those would double-count.
+func freshOutages(seen map[string]bool, outages []models.Outage) []models.Outage {
+	var fresh []models.Outage
+	for _, o := range outages {
+		if !seen[o.ID] {
+			seen[o.ID] = true
+			fresh = append(fresh, o)
+		}
+	}
+	return fresh
+}
+
 // RunAutomation executes the full pipeline once for a given user profile. All progress lines are
 // written to `out`; the structured outcome is returned in RunResult.
 func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[int]bool, out io.Writer) (*RunResult, error) {
@@ -178,152 +191,183 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 		return result, fmt.Errorf("login failed: %w", err)
 	}
 
-	lg.Println("[Step 1] Fetching pending outages...")
-	outages, err := client.FetchPendingOutages(limit)
-	if err != nil {
-		return result, fmt.Errorf("fetch pending: %w", err)
-	}
-	lg.Printf("  → Fetched %d outages", len(outages))
-
 	type processedOutage struct {
 		Outage        models.Outage
 		DurationHours float64
 		Rule          models.DurationRule
 	}
 
-	var processed []processedOutage
-	parseErrors := 0
-	for _, o := range outages {
-		hours, err := utils.CalculateDurationFromTimestamps(
-			o.OutageOccurDate, o.OutageOccurTime,
-			o.OutageRestoreDate, o.OutageRestoreTime,
-		)
+	// Page at a time: pending is a queue. Clearing a page drops those outages off the
+	// list and pulls fresh ones up into its place, so we refetch instead of paginating
+	// through a list that shifts under us — and only one slow /pending call is in flight.
+	// `stuck` is what we saw but could not clear (parse errors, deselected intervals,
+	// submit failures); those stay at the head of the queue, so the next fetch starts
+	// past them. A page with nothing new on it means there is nothing left to do.
+	seen := map[string]bool{}
+	stuck := 0
+	attempted := 0
+
+	for page := 1; ; page++ {
+		lg.Printf("[Step 1] Fetching pending page %d (offset=%d)...", page, stuck)
+		outages, totalPending, err := client.FetchPendingPage(stuck, config.PageSize)
 		if err != nil {
-			lg.Printf("  [WARN] Skip %s: %v", o.ID, err)
-			result.Rows = append(result.Rows, ProcessedRow{
-				OutageID: o.ID,
-				Feeder:   o.FeederName,
-				Status:   "parse_error",
-				Note:     err.Error(),
-			})
-			parseErrors++
-			continue
+			return result, fmt.Errorf("fetch pending: %w", err)
 		}
 
-		rule := ruleFor(hours, o.FeederName)
-
-		processed = append(processed, processedOutage{
-			Outage:        o,
-			DurationHours: hours,
-			Rule:          rule,
-		})
-	}
-
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "┌────────────────┬────────┬────────────────┬──────────────────┬─────────────────────────────────────────┐")
-	fmt.Fprintln(out, "│ Outage ID      │ Hours  │ Bucket         │ Feeder           │ Reason                                  │")
-	fmt.Fprintln(out, "├────────────────┼────────┼────────────────┼──────────────────┼─────────────────────────────────────────┤")
-	for _, p := range processed {
-		rName := getReasonName(p.Rule.ReasonID, p.Rule.ReasonName)
-		rStr := fmt.Sprintf("#%d %s", p.Rule.ReasonID, rName)
-		fmt.Fprintf(out, "│ %-14s │ %5.2f  │ %-14s │ %-16s │ %-39s │\n",
-			p.Outage.ID, p.DurationHours,
-			p.Rule.Label, p.Outage.FeederName, rStr)
-	}
-	fmt.Fprintln(out, "└────────────────┴────────┴────────────────┴──────────────────┴─────────────────────────────────────────┘")
-
-	toProcess := processed
-	if limit > 0 && len(processed) > limit {
-		toProcess = processed[:limit]
-		lg.Printf("⚙ Limiting to first %d outages (out of %d total)", limit, len(processed))
-	}
-
-	// Parse errors are outages that did not get cleared, so they count as failures
-	// and toward the total — otherwise the UI stat tiles don't sum to the row count.
-	result.Total = len(toProcess) + parseErrors
-	result.Failed = parseErrors
-	lg.Printf("[Step 2 & 3] Processing %d outages...", len(toProcess))
-
-	for i, p := range toProcess {
-		id := p.Outage.ID
-		rName := getReasonName(p.Rule.ReasonID, p.Rule.ReasonName)
-		row := ProcessedRow{
-			OutageID:   id,
-			Hours:      p.DurationHours,
-			Bucket:     p.Rule.Label,
-			Feeder:     p.Outage.FeederName,
-			ReasonID:   p.Rule.ReasonID,
-			ReasonName: rName,
+		fresh := freshOutages(seen, outages)
+		lg.Printf("  → Page has %d outages, %d new (%d pending overall)", len(outages), len(fresh), totalPending)
+		if len(fresh) == 0 {
+			lg.Println("  → Nothing new left to clear")
+			break
 		}
 
-		if enabledReasonIDs != nil && !enabledReasonIDs[p.Rule.ReasonID] {
-			lg.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (interval '%s' deselected)",
-				i+1, len(toProcess), id, p.DurationHours, p.Rule.Label)
-			row.Status = "skipped"
-			row.Note = fmt.Sprintf("interval '%s' deselected", p.Rule.Label)
-			result.Rows = append(result.Rows, row)
-			result.Skipped++
-			continue
-		}
-
-		lg.Printf("  [%d/%d] Outage %s | %.2fh | reason=#%d (%s)",
-			i+1, len(toProcess), id, p.DurationHours, p.Rule.ReasonID, rName)
-
-		locIDs, err := client.FetchLocIDs(id, p.Outage.FeederID)
-		if err == oms.ErrNoGeoLocation {
-			lg.Printf("    → No geo location found. Submitting general maintenance reason...")
-			if err := client.SubmitNoGeoReason(id); err != nil {
-				lg.Printf("    ✗ Submit failed: %v", err)
-				row.Status = "failed"
-				row.Note = "submit no_geo: " + err.Error()
-				result.Rows = append(result.Rows, row)
+		var processed []processedOutage
+		for _, o := range fresh {
+			hours, err := utils.CalculateDurationFromTimestamps(
+				o.OutageOccurDate, o.OutageOccurTime,
+				o.OutageRestoreDate, o.OutageRestoreTime,
+			)
+			if err != nil {
+				lg.Printf("  [WARN] Skip %s: %v", o.ID, err)
+				result.Rows = append(result.Rows, ProcessedRow{
+					OutageID: o.ID,
+					Feeder:   o.FeederName,
+					Status:   "parse_error",
+					Note:     err.Error(),
+				})
+				result.Total++
 				result.Failed++
+				stuck++
 				continue
 			}
-			lg.Printf("    ✓ Submitted (General Maintenance)")
+
+			processed = append(processed, processedOutage{
+				Outage:        o,
+				DurationHours: hours,
+				Rule:          ruleFor(hours, o.FeederName),
+			})
+		}
+
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "┌────────────────┬────────┬────────────────┬──────────────────┬─────────────────────────────────────────┐")
+		fmt.Fprintln(out, "│ Outage ID      │ Hours  │ Bucket         │ Feeder           │ Reason                                  │")
+		fmt.Fprintln(out, "├────────────────┼────────┼────────────────┼──────────────────┼─────────────────────────────────────────┤")
+		for _, p := range processed {
+			rName := getReasonName(p.Rule.ReasonID, p.Rule.ReasonName)
+			rStr := fmt.Sprintf("#%d %s", p.Rule.ReasonID, rName)
+			fmt.Fprintf(out, "│ %-14s │ %5.2f  │ %-14s │ %-16s │ %-39s │\n",
+				p.Outage.ID, p.DurationHours,
+				p.Rule.Label, p.Outage.FeederName, rStr)
+		}
+		fmt.Fprintln(out, "└────────────────┴────────┴────────────────┴──────────────────┴─────────────────────────────────────────┘")
+
+		toProcess := processed
+		if limit > 0 && attempted+len(toProcess) > limit {
+			toProcess = toProcess[:limit-attempted]
+			lg.Printf("⚙ Limiting to %d outages on this page (limit %d)", len(toProcess), limit)
+		}
+
+		result.Total += len(toProcess)
+		attempted += len(toProcess)
+		lg.Printf("[Step 2 & 3] Processing %d outages...", len(toProcess))
+
+		for i, p := range toProcess {
+			id := p.Outage.ID
+			rName := getReasonName(p.Rule.ReasonID, p.Rule.ReasonName)
+			row := ProcessedRow{
+				OutageID:   id,
+				Hours:      p.DurationHours,
+				Bucket:     p.Rule.Label,
+				Feeder:     p.Outage.FeederName,
+				ReasonID:   p.Rule.ReasonID,
+				ReasonName: rName,
+			}
+
+			if enabledReasonIDs != nil && !enabledReasonIDs[p.Rule.ReasonID] {
+				lg.Printf("  [%d/%d] Outage %s | %.2fh | ⊘ SKIPPED (interval '%s' deselected)",
+					i+1, len(toProcess), id, p.DurationHours, p.Rule.Label)
+				row.Status = "skipped"
+				row.Note = fmt.Sprintf("interval '%s' deselected", p.Rule.Label)
+				result.Rows = append(result.Rows, row)
+				result.Skipped++
+				stuck++
+				continue
+			}
+
+			lg.Printf("  [%d/%d] Outage %s | %.2fh | reason=#%d (%s)",
+				i+1, len(toProcess), id, p.DurationHours, p.Rule.ReasonID, rName)
+
+			locIDs, err := client.FetchLocIDs(id, p.Outage.FeederID)
+			if err == oms.ErrNoGeoLocation {
+				lg.Printf("    → No geo location found. Submitting general maintenance reason...")
+				if err := client.SubmitNoGeoReason(id); err != nil {
+					lg.Printf("    ✗ Submit failed: %v", err)
+					row.Status = "failed"
+					row.Note = "submit no_geo: " + err.Error()
+					result.Rows = append(result.Rows, row)
+					result.Failed++
+					stuck++
+					continue
+				}
+				lg.Printf("    ✓ Submitted (General Maintenance)")
+				row.Status = "submitted"
+				row.Note = "no geo location (General Maintenance)"
+				row.ReasonID = 44
+				result.Rows = append(result.Rows, row)
+				result.Success++
+
+				lg.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
+				time.Sleep(time.Duration(config.DelayBetweenOutages) * time.Millisecond)
+				continue
+			} else if err != nil {
+				lg.Printf("    ✗ loc_ids fetch failed: %v", err)
+				row.Status = "failed"
+				row.Note = "loc_ids fetch: " + err.Error()
+				result.Rows = append(result.Rows, row)
+				result.Failed++
+				stuck++
+				continue
+			}
+
+			var pickedLocID int
+			if p.DurationHours <= 0.25 {
+				pickedLocID = locIDs[0]
+				lg.Printf("    → loc_id=%d (1st pole selected for ≤15 min outage, from %d poles)", pickedLocID, len(locIDs))
+			} else {
+				pickedLocID = locIDs[rand.Intn(len(locIDs))]
+				lg.Printf("    → loc_id=%d (randomly picked from %d poles)", pickedLocID, len(locIDs))
+			}
+
+			if err := client.SubmitReason(id, pickedLocID, p.Rule.ReasonID); err != nil {
+				lg.Printf("    ✗ Submit failed: %v", err)
+				row.Status = "failed"
+				row.Note = "submit: " + err.Error()
+				result.Rows = append(result.Rows, row)
+				result.Failed++
+				stuck++
+				continue
+			}
+
+			lg.Printf("    ✓ Submitted")
 			row.Status = "submitted"
-			row.Note = "no geo location (General Maintenance)"
-			row.ReasonID = 44
 			result.Rows = append(result.Rows, row)
 			result.Success++
 
 			lg.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
 			time.Sleep(time.Duration(config.DelayBetweenOutages) * time.Millisecond)
-			continue
-		} else if err != nil {
-			lg.Printf("    ✗ loc_ids fetch failed: %v", err)
-			row.Status = "failed"
-			row.Note = "loc_ids fetch: " + err.Error()
-			result.Rows = append(result.Rows, row)
-			result.Failed++
-			continue
 		}
 
-		var pickedLocID int
-		if p.DurationHours <= 0.25 {
-			pickedLocID = locIDs[0]
-			lg.Printf("    → loc_id=%d (1st pole selected for ≤15 min outage, from %d poles)", pickedLocID, len(locIDs))
-		} else {
-			pickedLocID = locIDs[rand.Intn(len(locIDs))]
-			lg.Printf("    → loc_id=%d (randomly picked from %d poles)", pickedLocID, len(locIDs))
+		if limit > 0 && attempted >= limit {
+			lg.Printf("⚙ Limit of %d reached", limit)
+			break
+		}
+		if stuck >= totalPending {
+			lg.Println("  → Nothing left but outages we could not clear")
+			break
 		}
 
-		if err := client.SubmitReason(id, pickedLocID, p.Rule.ReasonID); err != nil {
-			lg.Printf("    ✗ Submit failed: %v", err)
-			row.Status = "failed"
-			row.Note = "submit: " + err.Error()
-			result.Rows = append(result.Rows, row)
-			result.Failed++
-			continue
-		}
-
-		lg.Printf("    ✓ Submitted")
-		row.Status = "submitted"
-		result.Rows = append(result.Rows, row)
-		result.Success++
-
-		lg.Printf("    → Waiting %dms before next outage...", config.DelayBetweenOutages)
-		time.Sleep(time.Duration(config.DelayBetweenOutages) * time.Millisecond)
+		lg.Printf("  → Waiting %dms before next page...", config.DelayBetweenPages)
+		time.Sleep(time.Duration(config.DelayBetweenPages) * time.Millisecond)
 	}
 
 	fmt.Fprintln(out)

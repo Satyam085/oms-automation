@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"oms-automtion/config"
@@ -34,9 +36,21 @@ func NewClient(profile models.UserProfile, lg *log.Logger) *Client {
 	}
 	return &Client{
 		Profile:    profile,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		HTTPClient: &http.Client{Timeout: httpTimeout()},
 		Log:        lg,
 	}
+}
+
+// httpTimeout is how long to wait for an OMS response. /reason/pending regularly
+// takes minutes when the server is loaded, so the default is generous.
+// ponytail: single timeout for every call; split per-endpoint only if one needs it.
+func httpTimeout() time.Duration {
+	if s := os.Getenv("OMS_HTTP_TIMEOUT"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 3 * time.Minute
 }
 
 // Login authenticates and sets the client's Token fields.

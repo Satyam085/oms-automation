@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"oms-automtion/config"
 	"oms-automtion/models"
@@ -14,72 +13,42 @@ import (
 
 var ErrNoGeoLocation = errors.New("no geo location found")
 
-// FetchPendingOutages fetches all pending outages using pagination.
-// If limit > 0, it stops fetching once the limit is reached.
-func (c *Client) FetchPendingOutages(limit int) ([]models.Outage, error) {
-	var all []models.Outage
-	offset := 0
-
-	for {
-		// Stop if we have enough outages
-		if limit > 0 && len(all) >= limit {
-			break
-		}
-
-		// Revert to the known working endpoint and payload
-		url := fmt.Sprintf("%s/reason/pending", config.BaseURL)
-		reqBody := models.PendingRequest{
-			FilteredData: []models.FilteredData{},
-			Offset:       offset,
-			Limit:        config.PageSize,
-		}
-
-		body, _ := json.Marshal(reqBody)
-		req, err := c.NewAPIRequest("POST", url, body)
-		if err != nil {
-			return nil, err
-		}
-
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("fetch pending: %w", err)
-		}
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("pending returned %d: %s", resp.StatusCode, respBody)
-		}
-
-		// DEBUG: Print raw response for first page
-		// if offset == 0 {
-		// 	log.Printf("\n[DEBUG] Raw API Response (first page):\n%s\n", string(respBody))
-		// }
-
-		var pr models.PendingResponse
-		if err := json.Unmarshal(respBody, &pr); err != nil {
-			return nil, fmt.Errorf("unmarshal pending: %w", err)
-		}
-
-		all = append(all, pr.Data...)
-		c.Log.Printf("  [Fetch] offset=%d got=%d total=%d", offset, len(pr.Data), pr.TotalRecords)
-
-		// Re-enabled pagination logic
-		if (limit > 0 && len(all) >= limit) || offset+config.PageSize >= pr.TotalRecords || len(pr.Data) == 0 {
-			break
-		}
-		offset += config.PageSize
-
-		// Rate limiting: delay between pagination requests
-		time.Sleep(time.Duration(config.DelayBetweenPages) * time.Millisecond)
+// FetchPendingPage fetches one page of pending outages and the overall pending
+// count. Callers clear what they get and fetch again rather than paginating:
+// cleared outages drop off the list and fresh ones move up into its place.
+// offset only needs to move past outages the caller saw but could not clear.
+func (c *Client) FetchPendingPage(offset, limit int) ([]models.Outage, int, error) {
+	url := fmt.Sprintf("%s/reason/pending", config.BaseURL)
+	reqBody := models.PendingRequest{
+		FilteredData: []models.FilteredData{},
+		Offset:       offset,
+		Limit:        limit,
 	}
 
-	// Trim to exact limit if we over-fetched
-	if limit > 0 && len(all) > limit {
-		all = all[:limit]
+	body, _ := json.Marshal(reqBody)
+	req, err := c.NewAPIRequest("POST", url, body)
+	if err != nil {
+		return nil, 0, err
 	}
 
-	return all, nil
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetch pending: %w", err)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, 0, fmt.Errorf("pending returned %d: %s", resp.StatusCode, respBody)
+	}
+
+	var pr models.PendingResponse
+	if err := json.Unmarshal(respBody, &pr); err != nil {
+		return nil, 0, fmt.Errorf("unmarshal pending: %w", err)
+	}
+
+	c.Log.Printf("  [Fetch] offset=%d got=%d total=%d", offset, len(pr.Data), pr.TotalRecords)
+	return pr.Data, pr.TotalRecords, nil
 }
 
 // FetchLocIDs extracts loc_ids from the GeoJSON response for a specific outage.
