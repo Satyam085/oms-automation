@@ -41,16 +41,19 @@ func NewClient(profile models.UserProfile, lg *log.Logger) *Client {
 	}
 }
 
-// httpTimeout is how long to wait for an OMS response. /reason/pending regularly
-// takes minutes when the server is loaded, so the default is generous.
-// ponytail: single timeout for every call; split per-endpoint only if one needs it.
+// httpTimeout is how long to wait for an OMS response. /reason/pending has been
+// degrading all day — 104s, 139s, 145s, then 264s — so the default is well clear
+// of the trend rather than just clear of the last measurement.
+// ponytail: still one timeout for every call. Login and submit answer in seconds,
+// so this ceiling only really applies to /pending; give those their own (tighter)
+// timeout if a hung submit ever stalls a run for ten minutes.
 func httpTimeout() time.Duration {
 	if s := os.Getenv("OMS_HTTP_TIMEOUT"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			return time.Duration(n) * time.Second
 		}
 	}
-	return 3 * time.Minute
+	return 10 * time.Minute
 }
 
 // Login authenticates and sets the client's Token fields.
