@@ -183,6 +183,11 @@ func makeRunHandler(guard *profileGuard) http.HandlerFunc {
 		}
 		defer runMu.Unlock()
 
+		// How long a run takes is up to OMS — minutes per /pending page, plus any
+		// rate-limit waits — so it can outlast WriteTimeout, which would drop the
+		// result of a run that already happened. Lift the deadline for this response.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 		var buf bytes.Buffer
 		result, err := RunAutomation(*profile, limit, enabledReasonIDs, &buf)
 

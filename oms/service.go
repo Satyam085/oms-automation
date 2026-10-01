@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"oms-automtion/config"
@@ -31,15 +30,13 @@ func (c *Client) FetchPendingPage(offset, limit int) ([]models.Outage, int, erro
 		return nil, 0, err
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	status, respBody, err := c.do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("fetch pending: %w", err)
 	}
-	respBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, 0, fmt.Errorf("pending returned %d: %s", resp.StatusCode, respBody)
+	if status != 200 {
+		return nil, 0, fmt.Errorf("pending returned %d: %s", status, respBody)
 	}
 
 	var pr models.PendingResponse
@@ -60,15 +57,13 @@ func (c *Client) FetchLocIDs(outageID string, feederID int) ([]int, error) {
 		return nil, err
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	status, respBody, err := c.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch detail %s: %w", outageID, err)
 	}
-	respBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("detail %s returned %d: %s", outageID, resp.StatusCode, respBody)
+	if status != 200 {
+		return nil, fmt.Errorf("detail %s returned %d: %s", outageID, status, respBody)
 	}
 
 	if strings.Contains(string(respBody), "no_geo_location") {
@@ -121,15 +116,13 @@ func (c *Client) SubmitReason(outageID string, locID int, reasonID int) error {
 		return err
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	status, respBody, err := c.do(req)
 	if err != nil {
 		return fmt.Errorf("submit %s: %w", outageID, err)
 	}
-	respBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("submit %s returned %d: %s", outageID, resp.StatusCode, respBody)
+	if status != 200 {
+		return fmt.Errorf("submit %s returned %d: %s", outageID, status, respBody)
 	}
 	return nil
 }
@@ -149,15 +142,13 @@ func (c *Client) SubmitNoGeoReason(outageID string) error {
 		return err
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	status, respBody, err := c.do(req)
 	if err != nil {
 		return fmt.Errorf("submit no_geo %s: %w", outageID, err)
 	}
-	respBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("submit no_geo %s returned %d: %s", outageID, resp.StatusCode, respBody)
+	if status != 200 {
+		return fmt.Errorf("submit no_geo %s returned %d: %s", outageID, status, respBody)
 	}
 	return nil
 }

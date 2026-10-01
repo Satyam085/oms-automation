@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -267,11 +268,11 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 			lg.Printf("⚙ Limiting to %d outages on this page (limit %d)", len(toProcess), limit)
 		}
 
-		result.Total += len(toProcess)
 		attempted += len(toProcess)
 		lg.Printf("[Step 2 & 3] Processing %d outages...", len(toProcess))
 
 		for i, p := range toProcess {
+			result.Total++
 			id := p.Outage.ID
 			rName := getReasonName(p.Rule.ReasonID, p.Rule.ReasonName)
 			row := ProcessedRow{
@@ -307,6 +308,9 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 					result.Rows = append(result.Rows, row)
 					result.Failed++
 					stuck++
+					if errors.Is(err, oms.ErrRateLimited) {
+						return result, err
+					}
 					continue
 				}
 				lg.Printf("    ✓ Submitted (General Maintenance)")
@@ -326,6 +330,9 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 				result.Rows = append(result.Rows, row)
 				result.Failed++
 				stuck++
+				if errors.Is(err, oms.ErrRateLimited) {
+					return result, err
+				}
 				continue
 			}
 
@@ -345,6 +352,9 @@ func RunAutomation(profile models.UserProfile, limit int, enabledReasonIDs map[i
 				result.Rows = append(result.Rows, row)
 				result.Failed++
 				stuck++
+				if errors.Is(err, oms.ErrRateLimited) {
+					return result, err
+				}
 				continue
 			}
 
