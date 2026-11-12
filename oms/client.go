@@ -26,6 +26,9 @@ var ErrRateLimited = errors.New("OMS rate limit (429 Too Many Requests)")
 // it doubles on each further 429.
 const rateLimitBackoff = 30 * time.Second
 
+// maxGap caps how far 429s can slow the request pace down.
+const maxGap = 15 * time.Second
+
 // sleep is swapped out by tests so retries don't take real time.
 var sleep = time.Sleep
 
@@ -37,6 +40,13 @@ type Client struct {
 	// RateLimitWait is how long one request may spend waiting out 429s before it
 	// fails with ErrRateLimited. Zero means don't wait.
 	RateLimitWait time.Duration
+	// Gap is the minimum time between the end of one OMS request and the start of
+	// the next — every call, so detail→submit pairs and /pending refetches are
+	// spaced out too, not just outages. Each 429 doubles it (up to maxGap) for the
+	// rest of the run: once OMS pushes back we stay under its limit instead of
+	// hitting it again and waiting it out on every request.
+	Gap  time.Duration
+	next time.Time // earliest the next request may go out
 }
 
 // NewClient builds a client for one profile. lg receives progress lines (pass the
@@ -45,18 +55,24 @@ func NewClient(profile models.UserProfile, lg *log.Logger) *Client {
 	if lg == nil {
 		lg = log.Default()
 	}
-	if profile.EmpNo == "" {
-		profile.CompanyName = config.Creds.CompanyName
-		profile.EmpNo = config.Creds.EmpNo
-		profile.Password = config.Creds.Password
-		profile.AppName = config.Creds.AppName
-	}
 	return &Client{
 		Profile:       profile,
 		HTTPClient:    &http.Client{Timeout: httpTimeout()},
 		Log:           lg,
 		RateLimitWait: rateLimitWait(),
+		Gap:           requestGap(),
 	}
+}
+
+// requestGap reads OMS_REQUEST_GAP_MS. The 1s default keeps a run at or under
+// 60 requests a minute.
+func requestGap() time.Duration {
+	if s := os.Getenv("OMS_REQUEST_GAP_MS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return time.Second
 }
 
 // httpTimeout is how long to wait for an OMS response. /reason/pending has been
@@ -94,7 +110,11 @@ func (c *Client) do(req *http.Request) (int, []byte, error) {
 	var waited time.Duration
 	backoff := rateLimitBackoff
 	for {
+		if wait := time.Until(c.next); wait > 0 {
+			sleep(wait)
+		}
 		resp, err := c.HTTPClient.Do(req)
+		c.next = time.Now().Add(c.Gap)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -124,8 +144,13 @@ func (c *Client) do(req *http.Request) (int, []byte, error) {
 		}
 
 		c.Log.Printf("    ⏳ OMS rate limit (429) on %s %s — retrying in %s (%s)", req.Method, req.URL.Path, wait, how)
+		if c.Gap < maxGap {
+			c.Gap = min(max(2*c.Gap, time.Second), maxGap)
+			c.Log.Printf("    🐢 Slowing down: now %s between OMS requests for the rest of this run", c.Gap)
+		}
 		sleep(wait)
 		waited += wait
+		c.next = time.Time{} // that wait already spaced out the retry
 
 		// The first attempt consumed the body; resend it from the top.
 		if req.GetBody != nil {
@@ -154,6 +179,9 @@ func retryAfter(header string, now time.Time) (wait time.Duration, ok bool) {
 
 // Login authenticates and sets the client's Token fields.
 func (c *Client) Login() error {
+	if c.Profile.EmpNo == "" || c.Profile.Password == "" {
+		return fmt.Errorf("%s has no OMS credentials: set OMS_EMP_NO and OMS_PASSWORD (suffixed _N for profile N) in .env", c.Profile.Name)
+	}
 	payload := models.LoginRequest{
 		CompanyName: c.Profile.CompanyName,
 		EmpNo:       c.Profile.EmpNo,

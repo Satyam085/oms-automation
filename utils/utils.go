@@ -105,8 +105,7 @@ func ClassifyRule(hours float64, rules []models.DurationRule) models.DurationRul
 		}
 	}
 
-	// Nothing matched: the last rule is a narrow window, not an upper bound, so
-	// falling back to it would mis-assign. Callers (see ruleFor) handle the
-	// over-range case themselves.
+	// Nothing matched: hours is past the last bucket. Callers (see ruleFor)
+	// handle the over-range case themselves.
 	return models.DurationRule{}
 }

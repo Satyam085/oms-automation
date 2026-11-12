@@ -4,31 +4,24 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"oms-automtion/models"
 )
 
-const (
-	BaseURL  = "https://omsapi.geourja.com"
-	PageSize = 10
+const BaseURL = "https://omsapi.geourja.com"
 
-	// Rate limiting delays (in milliseconds)
-	DelayBetweenPages   = 1000 // 1 second between pagination requests
-	DelayBetweenOutages = 1000 // 1 seconds between processing each outage
-)
-
-// Creds holds default OMS login credentials. Retained for backward compatibility.
-var Creds = struct {
-	CompanyName string
-	EmpNo       string
-	Password    string
-	AppName     string
-}{
-	CompanyName: envOr("OMS_COMPANY_NAME", "DGVCL"),
-	EmpNo:       envOr("OMS_EMP_NO", "25894"),
-	Password:    envOr("OMS_PASSWORD", "Dgvcl@8949"),
-	AppName:     envOr("OMS_APP_NAME", "SFMS-Web"),
+// PageSize is how many pending outages one /reason/pending call asks for
+// (OMS_PAGE_SIZE, default 500). The call costs about the same whatever the
+// limit — 8s for 10 outages, 9s for all 393 (measured 12 Nov 2026) — so the
+// default takes the whole queue in one call instead of one call per 10 or 50.
+// Pacing between requests is oms.Client.Gap.
+func PageSize() int {
+	if n, err := strconv.Atoi(os.Getenv("OMS_PAGE_SIZE")); err == nil && n > 0 {
+		return n
+	}
+	return 500
 }
 
 func loadDotEnv() {
@@ -69,16 +62,6 @@ func LoadProfiles() []models.UserProfile {
 	p1Password := envOr("OMS_PASSWORD_1", os.Getenv("OMS_PASSWORD"))
 	p1Company := envOr("OMS_COMPANY_NAME_1", envOr("OMS_COMPANY_NAME", "DGVCL"))
 	p1App := envOr("OMS_APP_NAME_1", envOr("OMS_APP_NAME", "SFMS-Web"))
-
-	if p1Passcode == "" {
-		p1Passcode = "123456"
-	}
-	if p1EmpNo == "" {
-		p1EmpNo = "25894"
-	}
-	if p1Password == "" {
-		p1Password = "Dgvcl@8949"
-	}
 
 	profiles = append(profiles, models.UserProfile{
 		Name:        "Profile 1",
@@ -124,7 +107,7 @@ var DurationRules = []models.DurationRule{
 	{Label: "≤ 15 min", MaxHours: 0.25, ReasonID: 21, ReasonName: "Jumper Touching"},
 	{Label: "15 min–1 hr", MaxHours: 1, ReasonID: 20, ReasonName: "Jumper Burnt"},
 	{Label: "1–3 hours", MaxHours: 3, ReasonID: 31, ReasonName: "Tree / Tree Branch Falling"},
-	{Label: "3–8 hours", MaxHours: 8, ReasonID: 74, ReasonName: "Conductor Snapped HT Line"},
-	{Label: "~15.73 hours", MaxHours: 15.73, ReasonID: 28, ReasonName: "Relay Problems"},
-	// Any other duration will be skipped
+	// Was #74 from 12 May 2026 — that is Cyclone in OMS, not Conductor Snapped.
+	{Label: "3–8 hours", MaxHours: 8, ReasonID: 9, ReasonName: "Conductor Snapped HT Line"},
+	// Over 8h: #28 Relay Problems for ~15h on KUMBHIYA/KHAKHAR, else #25 (see ruleFor).
 }

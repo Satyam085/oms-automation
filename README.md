@@ -15,7 +15,21 @@ placeholders only, never commit credentials**:
     OMS_PASSWORD=<OMS password>
     OMS_APP_NAME=SFMS-Web
 
-Extra users are `PASSCODE_2`, `OMS_EMP_NO_2`, … up to `_10`.
+Extra users are `PASSCODE_2`, `OMS_EMP_NO_2`, … up to `_10`. There are no
+built-in fallbacks: a profile without `OMS_EMP_NO`/`OMS_PASSWORD` fails to log in,
+and the web UI refuses to start without a 6-digit `PASSCODE`.
+
+## Rate limits
+
+OMS answers bursts with 429 Too Many Requests. The client spaces every request
+at least `OMS_REQUEST_GAP_MS` apart (default 1s), doubles that gap after each
+429 for the rest of the run, and waits out the 429 itself (Retry-After, or
+30s/1m/2m… backoff) up to `OMS_RATE_LIMIT_WAIT`.
+
+To keep the request count down, `/reason/pending` takes the whole queue in one
+call (`OMS_PAGE_SIZE`, default 500 — it costs about the same as a call for 10),
+and a feeder's pole list (1 MB+ for a big feeder) is fetched once per run, not
+once per outage: every sustained fault on that feeder reuses it.
 
 ## Run
 
@@ -29,6 +43,7 @@ Extra users are `PASSCODE_2`, `OMS_EMP_NO_2`, … up to `_10`.
 ## Duration → reason
 
 Buckets live in `config.DurationRules`; `ruleFor` in `outage_automation.go`
-applies them plus the overrides (>8h → #25 No Cause found, KUMBHIYA >6h → #25).
+applies them plus the overrides: KUMBHIYA/KHAKHAR 14.5–16.5h → #28 Relay Problems,
+then KUMBHIYA >6h → #25, then anything else >8h → #25 No Cause found.
 
     go test ./...

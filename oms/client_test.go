@@ -160,3 +160,60 @@ func TestRetryAfter(t *testing.T) {
 		}
 	}
 }
+
+func TestDoSpacesRequestsByGap(t *testing.T) {
+	slept := fakeSleep(t)
+	stub, c, url := newStub(t, "", http.StatusOK)
+	c.Gap = 800 * time.Millisecond
+
+	for range 3 {
+		if _, _, err := send(t, c, url); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// No wait before the first request; ~Gap before each one after it.
+	if len(*slept) != 2 || len(stub.requests()) != 3 {
+		t.Fatalf("slept %v over %d requests, want 2 waits over 3 requests", *slept, len(stub.requests()))
+	}
+	for _, d := range *slept {
+		if d <= 700*time.Millisecond || d > c.Gap {
+			t.Errorf("waited %v, want just under the %v gap", d, c.Gap)
+		}
+	}
+}
+
+func TestDo429SlowsTheRestOfTheRunWithoutDoubleWaiting(t *testing.T) {
+	slept := fakeSleep(t)
+	_, c, url := newStub(t, "5", http.StatusTooManyRequests, http.StatusOK)
+	c.Gap = 0
+
+	if _, _, err := send(t, c, url); err != nil {
+		t.Fatal(err)
+	}
+	// The retry waits only what Retry-After asked, not Retry-After plus the gap.
+	if want := []time.Duration{5 * time.Second}; !slices.Equal(*slept, want) {
+		t.Fatalf("slept %v, want %v", *slept, want)
+	}
+	if c.Gap != time.Second {
+		t.Fatalf("gap after a 429 = %v, want 1s (raised from 0)", c.Gap)
+	}
+	// The next request (a new call, not a retry) now honours the raised gap.
+	if _, _, err := send(t, c, url); err != nil {
+		t.Fatal(err)
+	}
+	if len(*slept) != 2 || (*slept)[1] <= 900*time.Millisecond {
+		t.Errorf("slept %v, want a ~1s gap before the next request", *slept)
+	}
+}
+
+func TestGapDoublingIsCapped(t *testing.T) {
+	fakeSleep(t)
+	_, c, url := newStub(t, "1", http.StatusTooManyRequests)
+	c.Gap = 10 * time.Second
+	c.RateLimitWait = 4 * time.Second
+
+	send(t, c, url) // four 429s, then gives up
+	if c.Gap != maxGap {
+		t.Errorf("gap = %v, want capped at %v", c.Gap, maxGap)
+	}
+}
